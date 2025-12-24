@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: mac101irl/openmm-kcx
 
 jobs:
   build-and-push:
@@ -40,4 +40,4 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Image digest
-        run: echo "Image pushed to ghcr.io/${{ github.repository }}:latest"
+        run: echo "Image pushed to ghcr.io/${{ env.IMAGE_NAME }}:latest"
