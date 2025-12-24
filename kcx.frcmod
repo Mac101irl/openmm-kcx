@@ -1,0 +1,33 @@
+KCX (N6-carboxylysine) force field parameters for AMBER ff19SB
+Derived from lysine parameters with carbamate modifications
+Reference: DOI 10.1002/jcc.21836
+
+MASS
+CX 12.01         0.360             sp2 carboxyl carbon of carbamate
+
+BOND
+CX-O2   648.0    1.250       carboxylate C-O (same as COO-)
+CX-N3   367.0    1.380       carbamate C-N bond
+N3-H    434.0    1.010       N-H in carbamate
+
+ANGLE
+O2-CX-O2    80.0      126.0      carboxylate O-C-O
+O2-CX-N3    70.0      117.0      carbamate O-C-N
+CX-N3-CT    80.0      122.0      carbamate C-N-CE angle
+CX-N3-H     50.0      118.0      carbamate C-N-H angle
+CT-N3-H     50.0      118.0      CE-N-H angle
+H-N3-H      35.0      120.0      H-N-H (if present)
+
+DIHE
+O2-CX-N3-CT    2    2.5     180.0     2.      carbamate rotation barrier
+O2-CX-N3-H     2    2.5     180.0     2.      
+CT-CT-N3-CX    1    0.0       0.0     3.      CD-CE-NZ-CX torsion
+CT-CT-N3-H     1    0.0       0.0     3.      
+X -CX-N3-X     2    2.5     180.0     2.      generic carbamate
+
+IMPROPER
+CX-N3-O2-O2   10.5    180.0     2.      carboxylate planarity
+N3-CT-CX-H     1.0    180.0     2.      nitrogen planarity
+
+NONBON
+  CX          1.9080  0.0860             same as sp2 C

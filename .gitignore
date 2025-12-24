@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.env
+*.log
+deploy_to_tamarind.py
+Dockerfile_selfcontained
