@@ -1,22 +1,35 @@
-FROM continuumio/miniconda3:latest
+FROM condaforge/mambaforge:latest
 
 LABEL maintainer="D-Hydantoinase Project"
 LABEL description="OpenMM with KCX (N6-carboxylysine) force field support"
 
 WORKDIR /app
 
-# Install OpenMM and dependencies via conda
-RUN conda install -y -c conda-forge \
+# Install in stages to avoid memory issues
+# Stage 1: Core packages
+RUN mamba install -y -c conda-forge \
     python=3.10 \
-    openmm>=8.0 \
-    parmed \
-    ambertools>=22 \
-    mdtraj \
     numpy \
     scipy \
     pandas \
+    && mamba clean -afy
+
+# Stage 2: OpenMM
+RUN mamba install -y -c conda-forge \
+    openmm \
+    parmed \
+    mdtraj \
+    && mamba clean -afy
+
+# Stage 3: AmberTools (largest package)
+RUN mamba install -y -c conda-forge \
+    ambertools \
+    && mamba clean -afy
+
+# Stage 4: OpenMM force fields
+RUN mamba install -y -c conda-forge \
     openmmforcefields \
-    && conda clean -afy
+    && mamba clean -afy
 
 # Copy force field files
 COPY kcx.frcmod /app/kcx.frcmod
