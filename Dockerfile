@@ -1,4 +1,4 @@
-FROM condaforge/mambaforge:latest
+FROM docker.io/condaforge/mambaforge:latest
 
 LABEL maintainer="D-Hydantoinase Project"
 LABEL description="OpenMM with KCX (N6-carboxylysine) force field support"
