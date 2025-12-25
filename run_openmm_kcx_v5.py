@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 """
-OpenMM MD Simulation with KCX (Carboxylated Lysine) Support - v5
+OpenMM MD Simulation with KCX (Carboxylated Lysine) Support - v5.1
 Full parameter support matching standard Tamarind OpenMM
 For D-Hydantoinase simulations with proper active site modeling
+Supports argument aliases: --pdb, --ligand, --time, --temp, etc.
 
 Author: Generated for BMS Hydantoinase Project
-Version: 5.0
+Version: 5.1
 """
 
 import os
