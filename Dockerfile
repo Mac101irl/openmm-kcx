@@ -5,29 +5,17 @@ LABEL description="OpenMM with KCX (N6-carboxylysine) force field support"
 
 WORKDIR /app
 
-# Install in stages to avoid memory issues
-# Stage 1: Core packages
-RUN mamba install -y -c conda-forge \
+# Install all packages in ONE step to avoid multiple dependency solves (reduces memory)
+# Use --no-update-deps to prevent re-solving existing packages
+RUN mamba install -y -c conda-forge --no-update-deps \
     python=3.10 \
     numpy \
     scipy \
     pandas \
-    && mamba clean -afy
-
-# Stage 2: OpenMM
-RUN mamba install -y -c conda-forge \
     openmm \
     parmed \
     mdtraj \
-    && mamba clean -afy
-
-# Stage 3: AmberTools (largest package)
-RUN mamba install -y -c conda-forge \
     ambertools \
-    && mamba clean -afy
-
-# Stage 4: OpenMM force fields
-RUN mamba install -y -c conda-forge \
     openmmforcefields \
     && mamba clean -afy
 
