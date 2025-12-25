@@ -27,12 +27,17 @@ def parse_arguments():
     )
     
     # -------------------------------------------------------------------------
-    # INPUT FILES
+    # INPUT FILES (support both --pdb/--pdbFile and --ligand/--ligandFile)
     # -------------------------------------------------------------------------
-    parser.add_argument('--pdbFile', required=True, 
+    # Primary names (API style)
+    parser.add_argument('--pdbFile', dest='pdbFile', default=None,
                         help='Input PDB file (can contain KCX residues)')
-    parser.add_argument('--ligandFile', default=None, 
+    parser.add_argument('--pdb', dest='pdbFile', default=None,
+                        help='Input PDB file (alias for --pdbFile)')
+    parser.add_argument('--ligandFile', dest='ligandFile', default=None, 
                         help='Ligand SDF/MOL2 file for protein-ligand simulations')
+    parser.add_argument('--ligand', dest='ligandFile', default=None,
+                        help='Ligand file (alias for --ligandFile)')
     parser.add_argument('--ligandCharge', type=int, default=0, 
                         help='Net formal charge of the ligand molecule')
     parser.add_argument('--systemType', default='protein-ligand',
@@ -99,13 +104,16 @@ def parse_arguments():
     # -------------------------------------------------------------------------
     # SIMULATION PARAMETERS
     # -------------------------------------------------------------------------
-    parser.add_argument('--minimizationSteps', type=int, default=10000,
+    parser.add_argument('--minimizationSteps', '--minimize', dest='minimizationSteps',
+                        type=int, default=10000,
                         help='Maximum steps for energy minimization')
     parser.add_argument('--minimizationTolerance', type=float, default=10.0,
                         help='Energy minimization convergence tolerance (kJ/mol/nm)')
-    parser.add_argument('--equilibrationTime', type=float, default=0.2,
+    parser.add_argument('--equilibrationTime', '--equilibrate', dest='equilibrationTime',
+                        type=float, default=0.2,
                         help='NVT/NPT equilibration time (ns)')
-    parser.add_argument('--productionTime', type=float, default=5.0,
+    parser.add_argument('--productionTime', '--time', dest='productionTime',
+                        type=float, default=5.0,
                         help='Production MD simulation time (ns)')
     parser.add_argument('--timestep', type=float, default=2.0,
                         help='Integration timestep (fs). Use 4.0 with hydrogenMass=4')
@@ -113,7 +121,8 @@ def parse_arguments():
     # -------------------------------------------------------------------------
     # TEMPERATURE & PRESSURE
     # -------------------------------------------------------------------------
-    parser.add_argument('--temperature', type=float, default=298.0,
+    parser.add_argument('--temperature', '--temp', dest='temperature',
+                        type=float, default=298.0,
                         help='Simulation temperature (K). Use 310 for physiological')
     parser.add_argument('--pressure', type=float, default=1.0,
                         help='Simulation pressure (bar)')
@@ -141,6 +150,8 @@ def parse_arguments():
     # -------------------------------------------------------------------------
     # OUTPUT PARAMETERS
     # -------------------------------------------------------------------------
+    parser.add_argument('--output', default='simulation',
+                        help='Output directory/prefix name')
     parser.add_argument('--equilTrajFreq', type=int, default=1000,
                         help='Equilibration trajectory save frequency (steps)')
     parser.add_argument('--prodTrajFreq', type=int, default=1000,
@@ -160,7 +171,13 @@ def parse_arguments():
                         choices=['backbone', 'heavy', 'all', 'protein'],
                         help='Atom selection for RMSD calculation')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # Validate required arguments
+    if args.pdbFile is None:
+        parser.error("--pdb or --pdbFile is required")
+    
+    return args
 
 
 # =============================================================================
