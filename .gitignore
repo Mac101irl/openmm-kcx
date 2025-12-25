@@ -2,5 +2,14 @@ __pycache__/
 *.py[cod]
 .env
 *.log
-deploy_to_tamarind.py
+
+# Deployment scripts with API keys
+deploy_*.py
+check_models.py
+
+# Alternative Dockerfiles
 Dockerfile_selfcontained
+Dockerfile.tamarind
+
+# Conda environment files (use environment.yml)
+conda.yaml
