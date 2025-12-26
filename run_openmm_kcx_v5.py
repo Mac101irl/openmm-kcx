@@ -1,121 +1,191 @@
-
 #!/usr/bin/env python
 """
 OpenMM MD Simulation with KCX (Carboxylated Lysine) Support - v6
 Tamarind Platform Compatible Version
 
 Conventions:
-- File inputs: Read from inputs/settingName.ext
-- Job Settings: Access via os.getenv('settingName')
+- File inputs: Read from inputs/settingName (no extension needed)
+- Job Settings: Access via os.getenv('settingName') OR command line args
 - Outputs: Save ALL results to out/ directory
 - Job name: Available as os.getenv('JobName')
 
 Author: Generated for BMS Hydantoinase Project
-Version: 6.0 (Tamarind Compatible)
+Version: 6.1 (Tamarind Compatible - CLI + ENV)
 """
 
 import os
 import sys
-import json
+import argparse
 import subprocess
 import shutil
 import glob
 from pathlib import Path
 
 # =============================================================================
-# SETTINGS - Read from Environment Variables (Tamarind Convention)
+# ARGUMENT PARSING + ENVIRONMENT VARIABLES
 # =============================================================================
 
-def get_settings():
-    """Get all settings from environment variables"""
+def parse_args():
+    """Parse command line arguments, falling back to environment variables"""
+    parser = argparse.ArgumentParser(
+        description='OpenMM MD Simulation with KCX Support (Tamarind Compatible)'
+    )
     
-    def get_env(name, default=None, type_fn=str):
-        """Get environment variable with type conversion"""
-        val = os.getenv(name, default)
-        if val is None:
-            return None
-        if type_fn == bool:
-            return str(val).lower() in ('true', 'yes', '1')
-        try:
-            return type_fn(val)
-        except (ValueError, TypeError):
-            return default
+    # Helper to get default from env
+    def env_default(name, default=None):
+        return os.getenv(name, default)
     
-    settings = {
-        # Job info
-        'jobName': get_env('JobName', 'openmm_simulation'),
-        
-        # Input files (these come from inputs/ directory)
-        'pdbFile': 'inputs/pdbFile.pdb',  # Tamarind convention
-        'ligandFile': 'inputs/ligandFile.sdf' if os.path.exists('inputs/ligandFile.sdf') else None,
-        'ligandCharge': get_env('ligandCharge', 0, int),
-        
-        # Force field
-        'forceField': get_env('forceField', 'ff19SB'),
-        'waterModel': get_env('waterModel', 'tip3p'),
-        
-        # Solvation
-        'boxSize': get_env('boxSize', 12.0, float),
-        'boxShape': get_env('boxShape', 'cube'),
-        'ionicStrength': get_env('ionicStrength', 0.15, float),
-        'positiveIon': get_env('positiveIon', 'Na+'),
-        'negativeIon': get_env('negativeIon', 'Cl-'),
-        'pH': get_env('pH', 7.0, float),
-        'removeWaters': get_env('removeWaters', 'no'),
-        
-        # Nonbonded
-        'nonbondedMethod': get_env('nonbondedMethod', 'PME'),
-        'nonbondedCutoff': get_env('nonbondedCutoff', 1.0, float),
-        'ewaldErrorTolerance': get_env('ewaldErrorTolerance', 0.0005, float),
-        'switchDistance': get_env('switchDistance', None, float),
-        
-        # Constraints
-        'constraints': get_env('constraints', 'HBonds'),
-        'rigidWater': get_env('rigidWater', 'yes'),
-        'hydrogenMass': get_env('hydrogenMass', None, float),
-        
-        # Simulation
-        'minimizationSteps': get_env('minimizationSteps', 10000, int),
-        'minimizationTolerance': get_env('minimizationTolerance', 10.0, float),
-        'equilibrationTime': get_env('equilibrationTime', 0.2, float),
-        'productionTime': get_env('productionTime', 5.0, float),
-        'timestep': get_env('timestep', 2.0, float),
-        
-        # Temperature & Pressure
-        'temperature': get_env('temperature', 310.0, float),
-        'pressure': get_env('pressure', 1.0, float),
-        'frictionCoeff': get_env('frictionCoeff', 1.0, float),
-        'barostatInterval': get_env('barostatInterval', 25, int),
-        
-        # Integrator
-        'integrator': get_env('integrator', 'LangevinMiddle'),
-        
-        # Output
-        'equilTrajFreq': get_env('equilTrajFreq', 1000, int),
-        'prodTrajFreq': get_env('prodTrajFreq', 1000, int),
-        'checkpointFreq': get_env('checkpointFreq', 10000, int),
-        'trajectoryFormat': get_env('trajectoryFormat', 'DCD'),
-        
-        # Analysis
-        'stepSize': get_env('stepSize', 5, int),
-        'rmsdMask': get_env('rmsdMask', 'backbone'),
-    }
+    # Input files
+    parser.add_argument('--pdbFile', type=str, 
+                        default=env_default('pdbFile', 'inputs/pdbFile'),
+                        help='Input PDB file path')
+    parser.add_argument('--ligandFile', type=str,
+                        default=env_default('ligandFile'),
+                        help='Ligand file (SDF/MOL2)')
+    parser.add_argument('--ligandCharge', type=int,
+                        default=int(env_default('ligandCharge', '0')),
+                        help='Ligand net charge')
     
-    # Check for ligand file with different extensions
-    for ext in ['.sdf', '.mol2', '.pdb']:
-        ligand_path = f'inputs/ligandFile{ext}'
-        if os.path.exists(ligand_path):
-            settings['ligandFile'] = ligand_path
-            break
+    # Force field
+    parser.add_argument('--forceField', type=str,
+                        default=env_default('forceField', 'ff19SB'),
+                        help='Protein force field')
+    parser.add_argument('--waterModel', type=str,
+                        default=env_default('waterModel', 'tip3p'),
+                        help='Water model')
     
-    return settings
+    # Solvation
+    parser.add_argument('--boxSize', type=float,
+                        default=float(env_default('boxSize', '12.0')),
+                        help='Box padding (Angstroms)')
+    parser.add_argument('--boxShape', type=str,
+                        default=env_default('boxShape', 'cube'),
+                        help='Box shape (cube/octahedron)')
+    parser.add_argument('--ionicStrength', type=float,
+                        default=float(env_default('ionicStrength', '0.15')),
+                        help='Ionic strength (M)')
+    parser.add_argument('--positiveIon', type=str,
+                        default=env_default('positiveIon', 'Na+'),
+                        help='Positive ion type')
+    parser.add_argument('--negativeIon', type=str,
+                        default=env_default('negativeIon', 'Cl-'),
+                        help='Negative ion type')
+    parser.add_argument('--pH', type=float,
+                        default=float(env_default('pH', '7.0')),
+                        help='System pH')
+    parser.add_argument('--removeWaters', type=str,
+                        default=env_default('removeWaters', 'no'),
+                        help='Remove crystallographic waters')
+    
+    # Nonbonded
+    parser.add_argument('--nonbondedMethod', type=str,
+                        default=env_default('nonbondedMethod', 'PME'),
+                        help='Nonbonded method')
+    parser.add_argument('--nonbondedCutoff', type=float,
+                        default=float(env_default('nonbondedCutoff', '1.0')),
+                        help='Nonbonded cutoff (nm)')
+    parser.add_argument('--ewaldErrorTolerance', type=float,
+                        default=float(env_default('ewaldErrorTolerance', '0.0005')),
+                        help='Ewald error tolerance')
+    parser.add_argument('--switchDistance', type=float,
+                        default=None,
+                        help='Switch distance (nm)')
+    
+    # Constraints
+    parser.add_argument('--constraints', type=str,
+                        default=env_default('constraints', 'HBonds'),
+                        help='Constraint type')
+    parser.add_argument('--rigidWater', type=str,
+                        default=env_default('rigidWater', 'yes'),
+                        help='Rigid water')
+    parser.add_argument('--hydrogenMass', type=float,
+                        default=None,
+                        help='Hydrogen mass (amu)')
+    
+    # Simulation
+    parser.add_argument('--minimizationSteps', type=int,
+                        default=int(env_default('minimizationSteps', '10000')),
+                        help='Max minimization steps')
+    parser.add_argument('--minimizationTolerance', type=float,
+                        default=float(env_default('minimizationTolerance', '10.0')),
+                        help='Minimization tolerance')
+    parser.add_argument('--equilibrationTime', type=float,
+                        default=float(env_default('equilibrationTime', '0.2')),
+                        help='Equilibration time (ns)')
+    parser.add_argument('--productionTime', type=float,
+                        default=float(env_default('productionTime', '5.0')),
+                        help='Production time (ns)')
+    parser.add_argument('--timestep', type=float,
+                        default=float(env_default('timestep', '2.0')),
+                        help='Timestep (fs)')
+    
+    # Temperature & Pressure
+    parser.add_argument('--temperature', type=float,
+                        default=float(env_default('temperature', '310.0')),
+                        help='Temperature (K)')
+    parser.add_argument('--pressure', type=float,
+                        default=float(env_default('pressure', '1.0')),
+                        help='Pressure (bar)')
+    parser.add_argument('--frictionCoeff', type=float,
+                        default=float(env_default('frictionCoeff', '1.0')),
+                        help='Friction coefficient (1/ps)')
+    parser.add_argument('--barostatInterval', type=int,
+                        default=int(env_default('barostatInterval', '25')),
+                        help='Barostat interval')
+    
+    # Integrator
+    parser.add_argument('--integrator', type=str,
+                        default=env_default('integrator', 'LangevinMiddle'),
+                        help='Integrator type')
+    
+    # Output
+    parser.add_argument('--equilTrajFreq', type=int,
+                        default=int(env_default('equilTrajFreq', '1000')),
+                        help='Equilibration trajectory frequency')
+    parser.add_argument('--prodTrajFreq', type=int,
+                        default=int(env_default('prodTrajFreq', '1000')),
+                        help='Production trajectory frequency')
+    parser.add_argument('--checkpointFreq', type=int,
+                        default=int(env_default('checkpointFreq', '10000')),
+                        help='Checkpoint frequency')
+    parser.add_argument('--trajectoryFormat', type=str,
+                        default=env_default('trajectoryFormat', 'DCD'),
+                        help='Trajectory format (DCD/XTC/PDB)')
+    
+    # Analysis
+    parser.add_argument('--stepSize', type=int,
+                        default=int(env_default('stepSize', '5')),
+                        help='Analysis stride')
+    parser.add_argument('--rmsdMask', type=str,
+                        default=env_default('rmsdMask', 'backbone'),
+                        help='RMSD atom selection')
+    
+    args = parser.parse_args()
+    
+    # Get job name from environment
+    args.jobName = os.getenv('JobName', 'openmm_simulation')
+    
+    return args
 
 
-class Settings:
-    """Settings object with attribute access"""
-    def __init__(self, settings_dict):
-        for key, value in settings_dict.items():
-            setattr(self, key, value)
+def find_input_file(base_path):
+    """Find input file with any extension"""
+    # If path already has extension and exists, use it
+    if os.path.exists(base_path):
+        return base_path
+    
+    # Try common extensions
+    for ext in ['', '.pdb', '.sdf', '.mol2', '.cif']:
+        test_path = base_path + ext
+        if os.path.exists(test_path):
+            return test_path
+    
+    # Search in inputs/ directory
+    base_name = os.path.basename(base_path)
+    for f in glob.glob(f'inputs/{base_name}*'):
+        return f
+    
+    return base_path
 
 
 # =============================================================================
@@ -356,12 +426,12 @@ def prepare_protein(pdb_file, remove_waters, output_dir='prep'):
 # TLEAP SYSTEM BUILDING
 # =============================================================================
 
-def create_tleap_input(settings, protein_pdb, ligand_mol2, ligand_frcmod, 
+def create_tleap_input(args, protein_pdb, ligand_mol2, ligand_frcmod, 
                        kcx_frcmod, kcx_lib, has_kcx, has_zn):
     """Create tleap input script for system building"""
     
     # Select force field files
-    if settings.forceField == 'ff19SB':
+    if args.forceField == 'ff19SB':
         ff_protein = 'leaprc.protein.ff19SB'
     else:
         ff_protein = 'leaprc.protein.ff14SB'
@@ -376,21 +446,21 @@ def create_tleap_input(settings, protein_pdb, ligand_mol2, ligand_frcmod,
         'opc': 'leaprc.water.opc',
         'opc3': 'leaprc.water.opc3'
     }
-    ff_water = water_models.get(settings.waterModel, 'leaprc.water.tip3p')
+    ff_water = water_models.get(args.waterModel, 'leaprc.water.tip3p')
     
     # Map ion names for tleap
     ion_map = {
         'Na+': 'Na+', 'K+': 'K+', 'Li+': 'Li+', 'Cs+': 'Cs+', 'Rb+': 'Rb+',
         'Cl-': 'Cl-', 'Br-': 'Br-', 'F-': 'F-', 'I-': 'I-'
     }
-    pos_ion = ion_map.get(settings.positiveIon, 'Na+')
-    neg_ion = ion_map.get(settings.negativeIon, 'Cl-')
+    pos_ion = ion_map.get(args.positiveIon, 'Na+')
+    neg_ion = ion_map.get(args.negativeIon, 'Cl-')
     
     # Calculate number of ions for ionic strength
-    n_ions = max(1, int(settings.ionicStrength * 60))
+    n_ions = max(1, int(args.ionicStrength * 60))
     
     # Box size in Angstroms
-    box_size = settings.boxSize
+    box_size = args.boxSize
     
     script = f"""# tleap input for OpenMM-KCX system
 # Force fields
@@ -442,7 +512,7 @@ complex = mol
 """
     
     # Solvate based on box shape
-    if settings.boxShape == 'octahedron':
+    if args.boxShape == 'octahedron':
         script += f"""
 # Solvate with truncated octahedron
 solvateOct complex TIP3PBOX {box_size}
@@ -507,7 +577,7 @@ def run_tleap(tleap_file):
 # OPENMM SIMULATION
 # =============================================================================
 
-def run_simulation(settings):
+def run_simulation(args):
     """Run OpenMM MD simulation with all specified parameters"""
     print(f"\n{'='*60}")
     print(f"OPENMM SIMULATION")
@@ -536,7 +606,7 @@ def run_simulation(settings):
         'CutoffPeriodic': app.CutoffPeriodic,
         'LJPME': app.LJPME
     }
-    nonbonded_method = nb_methods.get(settings.nonbondedMethod, app.PME)
+    nonbonded_method = nb_methods.get(args.nonbondedMethod, app.PME)
     
     # Constraints
     constraint_types = {
@@ -545,55 +615,55 @@ def run_simulation(settings):
         'AllBonds': app.AllBonds,
         'HAngles': app.HAngles
     }
-    constraints = constraint_types.get(settings.constraints, app.HBonds)
+    constraints = constraint_types.get(args.constraints, app.HBonds)
     
     # Create system with specified parameters
     system_kwargs = {
         'nonbondedMethod': nonbonded_method,
-        'nonbondedCutoff': settings.nonbondedCutoff * unit.nanometer,
+        'nonbondedCutoff': args.nonbondedCutoff * unit.nanometer,
         'constraints': constraints,
-        'rigidWater': settings.rigidWater == 'yes'
+        'rigidWater': args.rigidWater == 'yes'
     }
     
     # Add hydrogen mass repartitioning if specified
-    if settings.hydrogenMass is not None:
-        system_kwargs['hydrogenMass'] = settings.hydrogenMass * unit.amu
+    if args.hydrogenMass is not None:
+        system_kwargs['hydrogenMass'] = args.hydrogenMass * unit.amu
     
     system = prmtop.createSystem(**system_kwargs)
     
     # Set PME parameters if using PME
-    if settings.nonbondedMethod in ['PME', 'LJPME']:
+    if args.nonbondedMethod in ['PME', 'LJPME']:
         for force in system.getForces():
             if isinstance(force, mm.NonbondedForce):
-                force.setEwaldErrorTolerance(settings.ewaldErrorTolerance)
-                if settings.switchDistance is not None:
+                force.setEwaldErrorTolerance(args.ewaldErrorTolerance)
+                if args.switchDistance is not None:
                     force.setUseSwitchingFunction(True)
-                    force.setSwitchingDistance(settings.switchDistance * unit.nanometer)
+                    force.setSwitchingDistance(args.switchDistance * unit.nanometer)
     
     # Add barostat for NPT
     system.addForce(mm.MonteCarloBarostat(
-        settings.pressure * unit.bar,
-        settings.temperature * unit.kelvin,
-        settings.barostatInterval
+        args.pressure * unit.bar,
+        args.temperature * unit.kelvin,
+        args.barostatInterval
     ))
     
     # Create Integrator
-    print(f"Creating {settings.integrator} integrator...")
+    print(f"Creating {args.integrator} integrator...")
     
-    timestep = settings.timestep * unit.femtosecond
-    temperature = settings.temperature * unit.kelvin
-    friction = settings.frictionCoeff / unit.picosecond
+    timestep = args.timestep * unit.femtosecond
+    temperature = args.temperature * unit.kelvin
+    friction = args.frictionCoeff / unit.picosecond
     
-    if settings.integrator == 'LangevinMiddle':
+    if args.integrator == 'LangevinMiddle':
         integrator = mm.LangevinMiddleIntegrator(temperature, friction, timestep)
-    elif settings.integrator == 'Langevin':
+    elif args.integrator == 'Langevin':
         integrator = mm.LangevinIntegrator(temperature, friction, timestep)
-    elif settings.integrator == 'NoseHoover':
+    elif args.integrator == 'NoseHoover':
         integrator = mm.NoseHooverIntegrator(temperature, friction, timestep)
-    elif settings.integrator == 'Verlet':
+    elif args.integrator == 'Verlet':
         integrator = mm.VerletIntegrator(timestep)
         system.addForce(mm.AndersenThermostat(temperature, friction))
-    elif settings.integrator == 'Brownian':
+    elif args.integrator == 'Brownian':
         integrator = mm.BrownianIntegrator(temperature, friction, timestep)
     else:
         integrator = mm.LangevinMiddleIntegrator(temperature, friction, timestep)
@@ -623,14 +693,14 @@ def run_simulation(settings):
         simulation.context.setPeriodicBoxVectors(*inpcrd.boxVectors)
     
     # Energy Minimization
-    print(f"\nMinimizing energy ({settings.minimizationSteps} steps max)...")
+    print(f"\nMinimizing energy ({args.minimizationSteps} steps max)...")
     
     initial_state = simulation.context.getState(getEnergy=True)
     print(f"  Initial energy: {initial_state.getPotentialEnergy()}")
     
     simulation.minimizeEnergy(
-        tolerance=settings.minimizationTolerance * unit.kilojoule_per_mole / unit.nanometer,
-        maxIterations=settings.minimizationSteps
+        tolerance=args.minimizationTolerance * unit.kilojoule_per_mole / unit.nanometer,
+        maxIterations=args.minimizationSteps
     )
     
     final_state = simulation.context.getState(getEnergy=True, getPositions=True)
@@ -641,22 +711,22 @@ def run_simulation(settings):
         app.PDBFile.writeFile(simulation.topology, final_state.getPositions(), f)
     
     # Equilibration
-    equil_steps = int(settings.equilibrationTime * 1e6 / settings.timestep)
-    print(f"\nEquilibrating for {settings.equilibrationTime} ns ({equil_steps} steps)...")
+    equil_steps = int(args.equilibrationTime * 1e6 / args.timestep)
+    print(f"\nEquilibrating for {args.equilibrationTime} ns ({equil_steps} steps)...")
     
     # Add reporters for equilibration
     simulation.reporters.append(app.StateDataReporter(
-        'out/equilibration.log', settings.equilTrajFreq,
+        'out/equilibration.log', args.equilTrajFreq,
         step=True, time=True, potentialEnergy=True, kineticEnergy=True,
         temperature=True, volume=True, density=True,
         progress=True, remainingTime=True, speed=True,
         totalSteps=equil_steps
     ))
     
-    if settings.trajectoryFormat == 'DCD':
-        simulation.reporters.append(app.DCDReporter('out/equilibration.dcd', settings.equilTrajFreq))
-    elif settings.trajectoryFormat == 'XTC':
-        simulation.reporters.append(app.XTCReporter('out/equilibration.xtc', settings.equilTrajFreq))
+    if args.trajectoryFormat == 'DCD':
+        simulation.reporters.append(app.DCDReporter('out/equilibration.dcd', args.equilTrajFreq))
+    elif args.trajectoryFormat == 'XTC':
+        simulation.reporters.append(app.XTCReporter('out/equilibration.xtc', args.equilTrajFreq))
     
     simulation.step(equil_steps)
     
@@ -664,26 +734,26 @@ def run_simulation(settings):
     simulation.reporters.clear()
     
     # Production
-    prod_steps = int(settings.productionTime * 1e6 / settings.timestep)
-    print(f"\nRunning production for {settings.productionTime} ns ({prod_steps} steps)...")
+    prod_steps = int(args.productionTime * 1e6 / args.timestep)
+    print(f"\nRunning production for {args.productionTime} ns ({prod_steps} steps)...")
     
     # Add reporters for production
     simulation.reporters.append(app.StateDataReporter(
-        'out/production.log', settings.prodTrajFreq,
+        'out/production.log', args.prodTrajFreq,
         step=True, time=True, potentialEnergy=True, kineticEnergy=True,
         temperature=True, volume=True, density=True,
         progress=True, remainingTime=True, speed=True,
         totalSteps=prod_steps
     ))
     
-    if settings.trajectoryFormat == 'DCD':
-        simulation.reporters.append(app.DCDReporter('out/production.dcd', settings.prodTrajFreq))
-    elif settings.trajectoryFormat == 'XTC':
-        simulation.reporters.append(app.XTCReporter('out/production.xtc', settings.prodTrajFreq))
+    if args.trajectoryFormat == 'DCD':
+        simulation.reporters.append(app.DCDReporter('out/production.dcd', args.prodTrajFreq))
+    elif args.trajectoryFormat == 'XTC':
+        simulation.reporters.append(app.XTCReporter('out/production.xtc', args.prodTrajFreq))
     else:
-        simulation.reporters.append(app.PDBReporter('out/production.pdb', settings.prodTrajFreq))
+        simulation.reporters.append(app.PDBReporter('out/production.pdb', args.prodTrajFreq))
     
-    simulation.reporters.append(app.CheckpointReporter('out/checkpoint.chk', settings.checkpointFreq))
+    simulation.reporters.append(app.CheckpointReporter('out/checkpoint.chk', args.checkpointFreq))
     
     simulation.step(prod_steps)
     
@@ -701,7 +771,7 @@ def run_simulation(settings):
 # TRAJECTORY ANALYSIS
 # =============================================================================
 
-def run_analysis(settings):
+def run_analysis(args):
     """Run trajectory analysis with MDTraj"""
     print(f"\n{'='*60}")
     print(f"TRAJECTORY ANALYSIS")
@@ -718,9 +788,9 @@ def run_analysis(settings):
         return
     
     # Determine trajectory file
-    if settings.trajectoryFormat == 'DCD':
+    if args.trajectoryFormat == 'DCD':
         traj_file = 'out/production.dcd'
-    elif settings.trajectoryFormat == 'XTC':
+    elif args.trajectoryFormat == 'XTC':
         traj_file = 'out/production.xtc'
     else:
         traj_file = 'out/production.pdb'
@@ -730,18 +800,18 @@ def run_analysis(settings):
         return
     
     print(f"  Loading trajectory: {traj_file}")
-    traj = md.load(traj_file, top='system.pdb', stride=settings.stepSize)
+    traj = md.load(traj_file, top='system.pdb', stride=args.stepSize)
     print(f"  Frames: {traj.n_frames}")
     print(f"  Atoms: {traj.n_atoms}")
     
     # RMSD
     print("  Calculating RMSD...")
     
-    if settings.rmsdMask == 'backbone':
+    if args.rmsdMask == 'backbone':
         rmsd_atoms = traj.topology.select('backbone')
-    elif settings.rmsdMask == 'heavy':
+    elif args.rmsdMask == 'heavy':
         rmsd_atoms = traj.topology.select('mass > 2')
-    elif settings.rmsdMask == 'protein':
+    elif args.rmsdMask == 'protein':
         rmsd_atoms = traj.topology.select('protein')
     else:
         rmsd_atoms = traj.topology.select('all')
@@ -791,43 +861,47 @@ def run_analysis(settings):
 # =============================================================================
 
 def main():
-    # Get settings from environment variables (Tamarind convention)
-    settings_dict = get_settings()
-    settings = Settings(settings_dict)
+    # Parse command line arguments (with env var fallbacks)
+    args = parse_args()
+    
+    # Find actual input file paths
+    args.pdbFile = find_input_file(args.pdbFile)
+    if args.ligandFile:
+        args.ligandFile = find_input_file(args.ligandFile)
     
     print("="*70)
-    print("  OpenMM MD Simulation with KCX Support - v6 (Tamarind)")
+    print("  OpenMM MD Simulation with KCX Support - v6.1 (Tamarind)")
     print("="*70)
-    print(f"\nJob Name: {settings.jobName}")
+    print(f"\nJob Name: {args.jobName}")
     print("\nSIMULATION PARAMETERS:")
     print("-"*70)
-    print(f"  Input PDB:           {settings.pdbFile}")
-    print(f"  Ligand file:         {settings.ligandFile}")
-    print(f"  Ligand charge:       {settings.ligandCharge}")
+    print(f"  Input PDB:           {args.pdbFile}")
+    print(f"  Ligand file:         {args.ligandFile}")
+    print(f"  Ligand charge:       {args.ligandCharge}")
     print("-"*70)
-    print(f"  Force field:         {settings.forceField}")
-    print(f"  Water model:         {settings.waterModel}")
-    print(f"  Box size:            {settings.boxSize} Å")
-    print(f"  Box shape:           {settings.boxShape}")
-    print(f"  Ionic strength:      {settings.ionicStrength} M")
-    print(f"  pH:                  {settings.pH}")
+    print(f"  Force field:         {args.forceField}")
+    print(f"  Water model:         {args.waterModel}")
+    print(f"  Box size:            {args.boxSize} Å")
+    print(f"  Box shape:           {args.boxShape}")
+    print(f"  Ionic strength:      {args.ionicStrength} M")
+    print(f"  pH:                  {args.pH}")
     print("-"*70)
-    print(f"  Minimization steps:  {settings.minimizationSteps}")
-    print(f"  Equilibration:       {settings.equilibrationTime} ns")
-    print(f"  Production:          {settings.productionTime} ns")
-    print(f"  Timestep:            {settings.timestep} fs")
-    print(f"  Temperature:         {settings.temperature} K")
-    print(f"  Pressure:            {settings.pressure} bar")
+    print(f"  Minimization steps:  {args.minimizationSteps}")
+    print(f"  Equilibration:       {args.equilibrationTime} ns")
+    print(f"  Production:          {args.productionTime} ns")
+    print(f"  Timestep:            {args.timestep} fs")
+    print(f"  Temperature:         {args.temperature} K")
+    print(f"  Pressure:            {args.pressure} bar")
     print("-"*70)
-    print(f"  Integrator:          {settings.integrator}")
-    print(f"  Constraints:         {settings.constraints}")
-    print(f"  Nonbonded method:    {settings.nonbondedMethod}")
-    print(f"  Cutoff:              {settings.nonbondedCutoff} nm")
+    print(f"  Integrator:          {args.integrator}")
+    print(f"  Constraints:         {args.constraints}")
+    print(f"  Nonbonded method:    {args.nonbondedMethod}")
+    print(f"  Cutoff:              {args.nonbondedCutoff} nm")
     print("="*70)
     
     # Check input file exists
-    if not os.path.exists(settings.pdbFile):
-        print(f"ERROR: PDB file not found: {settings.pdbFile}")
+    if not os.path.exists(args.pdbFile):
+        print(f"ERROR: PDB file not found: {args.pdbFile}")
         print("Available files in inputs/:")
         for f in glob.glob('inputs/*'):
             print(f"  {f}")
@@ -838,19 +912,19 @@ def main():
     
     # Prepare ligand if provided
     ligand_mol2, ligand_frcmod = None, None
-    if settings.ligandFile and os.path.exists(settings.ligandFile):
+    if args.ligandFile and os.path.exists(args.ligandFile):
         ligand_mol2, ligand_frcmod = prepare_ligand(
-            settings.ligandFile, settings.ligandCharge, 'prep'
+            args.ligandFile, args.ligandCharge, 'prep'
         )
     
     # Prepare protein
     protein_pdb, has_kcx, has_zn = prepare_protein(
-        settings.pdbFile, settings.removeWaters, 'prep'
+        args.pdbFile, args.removeWaters, 'prep'
     )
     
     # Create tleap input
     tleap_file = create_tleap_input(
-        settings, protein_pdb, ligand_mol2, ligand_frcmod,
+        args, protein_pdb, ligand_mol2, ligand_frcmod,
         kcx_frcmod, kcx_lib, has_kcx, has_zn
     )
     
@@ -858,10 +932,10 @@ def main():
     run_tleap(tleap_file)
     
     # Run simulation
-    run_simulation(settings)
+    run_simulation(args)
     
     # Run analysis
-    run_analysis(settings)
+    run_analysis(args)
     
     print("\n" + "="*70)
     print("  ALL DONE!")
