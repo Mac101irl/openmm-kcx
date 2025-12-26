@@ -745,7 +745,7 @@ def run_analysis(settings):
     else:
         rmsd_atoms = traj.topology.select('all')
     
-    rmsd = md.rmsd(traj, traj, 0, atom_indices=rmsd_atoms) * 10  # nm to Ã…
+    rmsd = md.rmsd(traj, traj, 0, atom_indices=rmsd_atoms) * 10  # nm to Å
     time_ns = traj.time / 1000  # ps to ns
     
     np.savetxt('out/rmsd.csv', 
@@ -755,8 +755,8 @@ def run_analysis(settings):
     plt.figure(figsize=(10, 6))
     plt.plot(time_ns, rmsd, 'b-', linewidth=0.5)
     plt.xlabel('Time (ns)', fontsize=12)
-    plt.ylabel('RMSD (Ã…)', fontsize=12)
-    plt.title(f'Backbone RMSD (mean: {np.mean(rmsd):.2f} Ã…)', fontsize=14)
+    plt.ylabel('RMSD (Å)', fontsize=12)
+    plt.title(f'Backbone RMSD (mean: {np.mean(rmsd):.2f} Å)', fontsize=14)
     plt.tight_layout()
     plt.savefig('out/rmsd.png', dpi=150)
     plt.close()
@@ -766,7 +766,7 @@ def run_analysis(settings):
     
     ca_atoms = traj.topology.select('name CA')
     if len(ca_atoms) > 0:
-        rmsf = md.rmsf(traj, traj, 0, atom_indices=ca_atoms) * 10  # nm to Ã…
+        rmsf = md.rmsf(traj, traj, 0, atom_indices=ca_atoms) * 10  # nm to Å
         residues = [traj.topology.atom(i).residue.resSeq for i in ca_atoms]
         
         np.savetxt('out/rmsf.csv',
@@ -776,8 +776,8 @@ def run_analysis(settings):
         plt.figure(figsize=(12, 6))
         plt.plot(residues, rmsf, 'b-', linewidth=1)
         plt.xlabel('Residue Number', fontsize=12)
-        plt.ylabel('RMSF (Ã…)', fontsize=12)
-        plt.title(f'Per-Residue RMSF (mean: {np.mean(rmsf):.2f} Ã…)', fontsize=14)
+        plt.ylabel('RMSF (Å)', fontsize=12)
+        plt.title(f'Per-Residue RMSF (mean: {np.mean(rmsf):.2f} Å)', fontsize=14)
         plt.tight_layout()
         plt.savefig('out/rmsf.png', dpi=150)
         plt.close()
@@ -806,7 +806,7 @@ def main():
     print("-"*70)
     print(f"  Force field:         {settings.forceField}")
     print(f"  Water model:         {settings.waterModel}")
-    print(f"  Box size:            {settings.boxSize} Ã…")
+    print(f"  Box size:            {settings.boxSize} Å")
     print(f"  Box shape:           {settings.boxShape}")
     print(f"  Ionic strength:      {settings.ionicStrength} M")
     print(f"  pH:                  {settings.pH}")
