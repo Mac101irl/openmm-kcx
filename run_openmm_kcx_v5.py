@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 """
-OpenMM MD Simulation with KCX (Carboxylated Lysine) Support - v6
+OpenMM MD Simulation with KCX (Carboxylated Lysine) Support - v7
 Tamarind Platform Compatible Version
 
 Conventions:
-- File inputs: Read from inputs/settingName.ext
+- File inputs: Filenames in env vars or inputs.json, fetch from Tamarind API
 - Job Settings: Access via os.getenv('settingName')
 - Outputs: Save ALL results to out/ directory
 - Job name: Available as os.getenv('JobName')
 
 Author: Generated for BMS Hydantoinase Project
-Version: 6.0 (Tamarind Compatible)
+Version: 7.0 (Tamarind Compatible with API file fetching)
 """
 
 import os
@@ -19,10 +19,14 @@ import json
 import subprocess
 import shutil
 import glob
+import base64
+import urllib.request
+import urllib.error
+import urllib.parse
 from pathlib import Path
 
 # =============================================================================
-# FILE DETECTION - Handle Tamarind's file input methods
+# TAMARIND FILE HANDLING
 # =============================================================================
 
 def load_inputs_json():
@@ -35,96 +39,249 @@ def load_inputs_json():
             return data
     return {}
 
-def find_input_file(setting_name, extensions=None):
+def get_api_key():
     """
-    Find an input file in Tamarind's inputs/ directory.
+    Get Tamarind API key from various sources.
+    Priority: env var > inputs.json setting > None
+    """
+    # Check environment variables
+    for key_name in ['TAMARIND_API_KEY', 'API_KEY', 'apiKey', 'x-api-key']:
+        key = os.environ.get(key_name)
+        if key:
+            print(f"Found API key in env var: {key_name}")
+            return key
     
-    Tamarind has multiple ways of providing files:
-    1. Direct file at inputs/<settingName> (with or without extension)
-    2. File reference in inputs/inputs.json
-    3. Environment variable pointing to file path
+    # Check if passed as a job setting in inputs.json
+    inputs_data = load_inputs_json()
+    api_key = inputs_data.get('apiKey') or inputs_data.get('API_KEY')
+    if api_key:
+        print("Found API key in inputs.json")
+        return api_key
     
-    Args:
-        setting_name: The base name (e.g., 'pdbFile')
-        extensions: List of extensions to try (e.g., ['.pdb', '.cif'])
+    # Check regular env var from job settings
+    api_key = os.getenv('apiKey')
+    if api_key:
+        print("Found API key in apiKey env var")
+        return api_key
     
-    Returns:
-        Path to the found file, or None if not found
+    return None
+
+def fetch_file_from_tamarind(filename, output_path, api_key=None):
+    """
+    Fetch a file from Tamarind's file storage.
+    
+    Uses the Tamarind API: https://app.tamarind.bio/api/files/{filename}
+    """
+    if api_key is None:
+        api_key = get_api_key()
+    
+    if not api_key:
+        print(f"  No API key available to fetch {filename}")
+        print("  Tip: Pass 'apiKey' in job settings to enable file fetching")
+        return False
+    
+    base_url = 'https://app.tamarind.bio/api'
+    
+    # Try to download the file
+    try:
+        # URL encode the filename for the request
+        encoded_filename = urllib.parse.quote(filename, safe='')
+        url = f"{base_url}/files/{encoded_filename}"
+        print(f"  Attempting to fetch: {url}")
+        
+        req = urllib.request.Request(url)
+        req.add_header('x-api-key', api_key)
+        
+        with urllib.request.urlopen(req, timeout=60) as response:
+            content = response.read()
+            
+            os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+            with open(output_path, 'wb') as f:
+                f.write(content)
+            
+            print(f"  Successfully downloaded {filename} to {output_path}")
+            return True
+            
+    except urllib.error.HTTPError as e:
+        print(f"  HTTP Error fetching {filename}: {e.code} {e.reason}")
+    except urllib.error.URLError as e:
+        print(f"  URL Error fetching {filename}: {e.reason}")
+    except Exception as e:
+        print(f"  Error fetching {filename}: {e}")
+    
+    return False
+
+def search_for_file_globally(filename, extensions=None):
+    """
+    Search entire filesystem for a file by name.
+    This is a last resort to find where Tamarind might place files.
     """
     if extensions is None:
         extensions = []
     
-    # Method 1: Check inputs.json for file references
-    inputs_data = load_inputs_json()
-    if setting_name in inputs_data:
-        file_ref = inputs_data[setting_name]
-        print(f"Found {setting_name} in inputs.json: {file_ref}")
-        # If it's a path that exists, use it
-        if isinstance(file_ref, str) and os.path.exists(file_ref):
-            return file_ref
-        # If it's a dict with 'path' key
-        if isinstance(file_ref, dict) and 'path' in file_ref:
-            if os.path.exists(file_ref['path']):
-                return file_ref['path']
+    search_dirs = [
+        '/', '/app', '/home', '/data', '/input', '/inputs', '/files',
+        '/var', '/tmp', '/mnt', '/opt', '/root', '/workspace',
+        os.path.expanduser('~'), os.getcwd()
+    ]
     
-    # Method 2: Check environment variable
-    env_value = os.getenv(setting_name)
-    if env_value and os.path.exists(env_value):
-        print(f"Found {setting_name} from env var: {env_value}")
-        return env_value
+    # Get just the basename
+    basename = os.path.basename(filename)
+    name_without_ext = os.path.splitext(basename)[0]
     
-    # Method 3: Direct file at inputs/<settingName>
+    patterns_to_search = [basename, name_without_ext]
+    for ext in extensions:
+        patterns_to_search.append(f"{name_without_ext}{ext}")
+    
+    found_files = []
+    
+    for search_dir in search_dirs:
+        if not os.path.exists(search_dir):
+            continue
+        try:
+            for root, dirs, files in os.walk(search_dir):
+                # Don't recurse too deep
+                depth = root.replace(search_dir, '').count(os.sep)
+                if depth > 4:
+                    dirs.clear()
+                    continue
+                    
+                for pattern in patterns_to_search:
+                    if pattern in files:
+                        found_path = os.path.join(root, pattern)
+                        found_files.append(found_path)
+                        print(f"  FOUND: {found_path}")
+        except PermissionError:
+            continue
+        except Exception as e:
+            continue
+    
+    return found_files
+
+
+def find_input_file(setting_name, extensions=None):
+    """
+    Find an input file for Tamarind jobs.
+    
+    Strategy:
+    1. Check if file exists directly in inputs/ directory
+    2. Get filename from environment variable
+    3. Get filename from inputs.json
+    4. Search common directories
+    5. Try to fetch from Tamarind API (requires API key in env)
+    6. Global filesystem search
+    
+    Args:
+        setting_name: The setting name (e.g., 'pdbFile')
+        extensions: List of extensions to try (e.g., ['.pdb', '.cif'])
+    
+    Returns:
+        Path to the found/downloaded file, or None if not found
+    """
+    if extensions is None:
+        extensions = []
+    
+    print(f"\nSearching for {setting_name}...")
+    
+    # Strategy 1: Check if file exists directly in inputs/
     base_path = f'inputs/{setting_name}'
-    
-    # Check without extension first (Tamarind default)
     if os.path.exists(base_path) and os.path.isfile(base_path):
-        print(f"Found input file: {base_path}")
+        print(f"  Found at: {base_path}")
         return base_path
     
-    # Then check with each extension
     for ext in extensions:
         path_with_ext = f'{base_path}{ext}'
         if os.path.exists(path_with_ext) and os.path.isfile(path_with_ext):
-            print(f"Found input file: {path_with_ext}")
+            print(f"  Found at: {path_with_ext}")
             return path_with_ext
     
-    # Method 4: Check all files in inputs/ directory for matching names
-    if os.path.exists('inputs'):
-        for filename in os.listdir('inputs'):
-            if filename == 'inputs.json':
-                continue
-            # Check if filename starts with setting_name
-            if filename.startswith(setting_name):
-                file_path = f'inputs/{filename}'
-                print(f"Found matching file: {file_path}")
-                return file_path
-            # Check if any extension matches
-            for ext in extensions:
-                if filename.endswith(ext):
-                    file_path = f'inputs/{filename}'
-                    print(f"Found file with matching extension: {file_path}")
-                    return file_path
+    # Strategy 2: Get filename from environment variable
+    filename = os.getenv(setting_name)
+    print(f"  Env var {setting_name} = {filename}")
     
-    # List what's in the inputs directory for debugging
-    if os.path.exists('inputs'):
-        print(f"Contents of inputs/ directory: {os.listdir('inputs')}")
-    else:
-        print("Warning: inputs/ directory does not exist")
+    # Strategy 3: Get filename from inputs.json
+    if not filename:
+        inputs_data = load_inputs_json()
+        filename = inputs_data.get(setting_name)
+        print(f"  inputs.json {setting_name} = {filename}")
     
+    if not filename:
+        print(f"  No filename found for {setting_name}")
+        return None
+    
+    # Check if the filename itself is a path that exists
+    if os.path.exists(filename):
+        print(f"  File exists at: {filename}")
+        return filename
+    
+    # Check in inputs/ directory
+    inputs_path = f'inputs/{filename}'
+    if os.path.exists(inputs_path):
+        print(f"  File exists at: {inputs_path}")
+        return inputs_path
+    
+    # Check in current directory
+    if os.path.exists(filename):
+        print(f"  File exists at: {filename}")
+        return filename
+    
+    # Strategy 4: Check common directories
+    common_dirs = ['/data', '/files', '/input', '/app/inputs', '/app/data', 
+                   '/home', '/tmp', '/workspace', '/mnt']
+    for dir_path in common_dirs:
+        test_path = os.path.join(dir_path, filename)
+        if os.path.exists(test_path):
+            print(f"  File exists at: {test_path}")
+            return test_path
+        for ext in extensions:
+            test_path_ext = os.path.join(dir_path, os.path.splitext(filename)[0] + ext)
+            if os.path.exists(test_path_ext):
+                print(f"  File exists at: {test_path_ext}")
+                return test_path_ext
+    
+    # Strategy 5: Try to fetch from Tamarind API (only if API key available in env)
+    output_path = f'inputs/{filename}'
+    if fetch_file_from_tamarind(filename, output_path):
+        return output_path
+    
+    # Strategy 6: Global filesystem search
+    print(f"  Performing global filesystem search for {filename}...")
+    found = search_for_file_globally(filename, extensions)
+    if found:
+        return found[0]  # Return first match
+    
+    print(f"  Could not find or fetch {setting_name}")
     return None
 
 # =============================================================================
-# SETTINGS - Read from Environment Variables (Tamarind Convention)
+# SETTINGS
 # =============================================================================
 
+def get_env(name, default=None, type_fn=str):
+    """Get environment variable with type conversion"""
+    val = os.getenv(name)
+    if val is None or val == '' or val == 'undefined':
+        return default
+    if type_fn == bool:
+        return str(val).lower() in ('true', 'yes', '1')
+    try:
+        return type_fn(val)
+    except (ValueError, TypeError):
+        return default
+
 def get_settings():
-    """Get all settings from environment variables"""
+    """Get all settings from environment variables and inputs.json"""
     
-    def get_env(name, default=None, type_fn=str):
-        """Get environment variable with type conversion"""
-        val = os.getenv(name, default)
+    # Load inputs.json for any settings not in env vars
+    inputs_data = load_inputs_json()
+    
+    def get_setting(name, default=None, type_fn=str):
+        """Get setting from env var or inputs.json"""
+        val = os.getenv(name)
+        if val is None or val == '' or val == 'undefined':
+            val = inputs_data.get(name)
         if val is None:
-            return None
+            return default
         if type_fn == bool:
             return str(val).lower() in ('true', 'yes', '1')
         try:
@@ -132,68 +289,68 @@ def get_settings():
         except (ValueError, TypeError):
             return default
     
-    # Find input files using Tamarind-compatible detection
+    # Find input files
     pdb_file = find_input_file('pdbFile', ['.pdb', '.cif', '.ent'])
     ligand_file = find_input_file('ligandFile', ['.sdf', '.mol2', '.pdb'])
     
     settings = {
         # Job info
-        'jobName': get_env('JobName', 'openmm_simulation'),
+        'jobName': get_setting('JobName', 'openmm_simulation'),
         
-        # Input files (detected from inputs/ directory)
+        # Input files
         'pdbFile': pdb_file,
         'ligandFile': ligand_file,
-        'ligandCharge': get_env('ligandCharge', 0, int),
+        'ligandCharge': get_setting('ligandCharge', 0, int),
         
         # Force field
-        'forceField': get_env('forceField', 'ff19SB'),
-        'waterModel': get_env('waterModel', 'tip3p'),
+        'forceField': get_setting('forceField', 'ff19SB'),
+        'waterModel': get_setting('waterModel', 'tip3p'),
         
         # Solvation
-        'boxSize': get_env('boxSize', 12.0, float),
-        'boxShape': get_env('boxShape', 'cube'),
-        'ionicStrength': get_env('ionicStrength', 0.15, float),
-        'positiveIon': get_env('positiveIon', 'Na+'),
-        'negativeIon': get_env('negativeIon', 'Cl-'),
-        'pH': get_env('pH', 7.0, float),
-        'removeWaters': get_env('removeWaters', 'no'),
+        'boxSize': get_setting('boxSize', 12.0, float),
+        'boxShape': get_setting('boxShape', 'cube'),
+        'ionicStrength': get_setting('ionicStrength', 0.15, float),
+        'positiveIon': get_setting('positiveIon', 'Na+'),
+        'negativeIon': get_setting('negativeIon', 'Cl-'),
+        'pH': get_setting('pH', 7.0, float),
+        'removeWaters': get_setting('removeWaters', 'no'),
         
         # Nonbonded
-        'nonbondedMethod': get_env('nonbondedMethod', 'PME'),
-        'nonbondedCutoff': get_env('nonbondedCutoff', 1.0, float),
-        'ewaldErrorTolerance': get_env('ewaldErrorTolerance', 0.0005, float),
-        'switchDistance': get_env('switchDistance', None, float),
+        'nonbondedMethod': get_setting('nonbondedMethod', 'PME'),
+        'nonbondedCutoff': get_setting('nonbondedCutoff', 1.0, float),
+        'ewaldErrorTolerance': get_setting('ewaldErrorTolerance', 0.0005, float),
+        'switchDistance': get_setting('switchDistance', None, float),
         
         # Constraints
-        'constraints': get_env('constraints', 'HBonds'),
-        'rigidWater': get_env('rigidWater', 'yes'),
-        'hydrogenMass': get_env('hydrogenMass', None, float),
+        'constraints': get_setting('constraints', 'HBonds'),
+        'rigidWater': get_setting('rigidWater', 'yes'),
+        'hydrogenMass': get_setting('hydrogenMass', None, float),
         
         # Simulation
-        'minimizationSteps': get_env('minimizationSteps', 10000, int),
-        'minimizationTolerance': get_env('minimizationTolerance', 10.0, float),
-        'equilibrationTime': get_env('equilibrationTime', 0.2, float),
-        'productionTime': get_env('productionTime', 5.0, float),
-        'timestep': get_env('timestep', 2.0, float),
+        'minimizationSteps': get_setting('minimizationSteps', 10000, int),
+        'minimizationTolerance': get_setting('minimizationTolerance', 10.0, float),
+        'equilibrationTime': get_setting('equilibrationTime', 0.2, float),
+        'productionTime': get_setting('productionTime', 1.0, float),
+        'timestep': get_setting('timestep', 2.0, float),
         
         # Temperature & Pressure
-        'temperature': get_env('temperature', 310.0, float),
-        'pressure': get_env('pressure', 1.0, float),
-        'frictionCoeff': get_env('frictionCoeff', 1.0, float),
-        'barostatInterval': get_env('barostatInterval', 25, int),
+        'temperature': get_setting('temperature', 310.0, float),
+        'pressure': get_setting('pressure', 1.0, float),
+        'frictionCoeff': get_setting('frictionCoeff', 1.0, float),
+        'barostatInterval': get_setting('barostatInterval', 25, int),
         
         # Integrator
-        'integrator': get_env('integrator', 'LangevinMiddle'),
+        'integrator': get_setting('integrator', 'LangevinMiddle'),
         
         # Output
-        'equilTrajFreq': get_env('equilTrajFreq', 1000, int),
-        'prodTrajFreq': get_env('prodTrajFreq', 1000, int),
-        'checkpointFreq': get_env('checkpointFreq', 10000, int),
-        'trajectoryFormat': get_env('trajectoryFormat', 'DCD'),
+        'equilTrajFreq': get_setting('equilTrajFreq', 1000, int),
+        'prodTrajFreq': get_setting('prodTrajFreq', 1000, int),
+        'checkpointFreq': get_setting('checkpointFreq', 10000, int),
+        'trajectoryFormat': get_setting('trajectoryFormat', 'DCD'),
         
         # Analysis
-        'stepSize': get_env('stepSize', 5, int),
-        'rmsdMask': get_env('rmsdMask', 'backbone'),
+        'stepSize': get_setting('stepSize', 5, int),
+        'rmsdMask': get_setting('rmsdMask', 'backbone'),
     }
     
     return settings
@@ -213,45 +370,44 @@ class Settings:
 def create_kcx_frcmod():
     """Create AMBER frcmod file for KCX (carboxylated lysine) parameters"""
     return """KCX (N6-carboxylysine) parameters for AMBER ff19SB
-Remark: Parameters for carboxylated lysine found in metalloenzymes
 MASS
-c3 12.01         0.878   sp3 carbon (GAFF2)
-c  12.01         0.616   sp2 carbonyl carbon
-o  16.00         0.434   carbonyl oxygen
-n  14.01         0.530   sp2 nitrogen with 1 H
+c3 12.01         0.878
+c  12.01         0.616
+o  16.00         0.434
+n  14.01         0.530
 
 BOND
-c3-n   330.6    1.456   from GAFF2
-c -n   427.6    1.379   from GAFF2
-c -o   637.7    1.218   from GAFF2
-n -hn   403.2    1.013   from GAFF2
+c3-n   330.6    1.456
+c -n   427.6    1.379
+c -o   637.7    1.218
+n -hn  403.2    1.013
 
 ANGLE
-c3-c3-n    66.0      111.04  from GAFF2
-c3-n -c    63.9      121.35  from GAFF2
-c3-n -hn   46.0      116.78  from GAFF2
-c -n -hn   48.3      117.55  from GAFF2
-n -c -o    75.8      122.03  from GAFF2
-o -c -o    78.2      129.52  carboxylate
+c3-c3-n    66.0      111.04
+c3-n -c    63.9      121.35
+c3-n -hn   46.0      116.78
+c -n -hn   48.3      117.55
+n -c -o    75.8      122.03
+o -c -o    78.2      129.52
 
 DIHE
-c3-c3-n -c     1    0.650       180.0     2.    from GAFF2
-c3-c3-n -hn    1    0.000         0.0     2.    from GAFF2
-c3-n -c -o     1    2.500       180.0     2.    from GAFF2
-hn-n -c -o     1    2.500       180.0    -2.    from GAFF2
-hn-n -c -o     1    2.000         0.0     1.    from GAFF2
-X -c -n -X     4   10.000       180.0     2.    general
+c3-c3-n -c     1    0.650       180.0     2.
+c3-c3-n -hn    1    0.000         0.0     2.
+c3-n -c -o     1    2.500       180.0     2.
+hn-n -c -o     1    2.500       180.0    -2.
+hn-n -c -o     1    2.000         0.0     1.
+X -c -n -X     4   10.000       180.0     2.
 
 IMPROPER
-c -n -o -o     1.1         180.         2.    carboxylate planarity
-n -c3-c -hn   1.1         180.         2.    nitrogen planarity
+c -n -o -o     1.1         180.         2.
+n -c3-c -hn   1.1         180.         2.
 
 NONBON
-c3    1.9080  0.1094    sp3 carbon GAFF2
-c     1.9080  0.0860    sp2 carbon
-o     1.6612  0.2100    carbonyl oxygen
-n     1.8240  0.1700    sp2 nitrogen
-hn    0.6000  0.0157    H on nitrogen
+c3    1.9080  0.1094
+c     1.9080  0.0860
+o     1.6612  0.2100
+n     1.8240  0.1700
+hn    0.6000  0.0157
 """
 
 
@@ -343,7 +499,6 @@ def prepare_ligand(ligand_file, ligand_charge, output_dir='prep'):
     
     os.makedirs(output_dir, exist_ok=True)
     
-    # Determine input file type
     ext = os.path.splitext(ligand_file)[1].lower()
     if ext == '.sdf':
         input_type = 'sdf'
@@ -357,9 +512,8 @@ def prepare_ligand(ligand_file, ligand_charge, output_dir='prep'):
     mol2_out = os.path.join(output_dir, 'ligand.mol2')
     frcmod_out = os.path.join(output_dir, 'ligand.frcmod')
     
-    # Run antechamber for AM1-BCC charges
-    print("  Running antechamber for AM1-BCC charges...")
-    cmd_antechamber = [
+    print("  Running antechamber...")
+    cmd = [
         'antechamber',
         '-i', ligand_file,
         '-fi', input_type,
@@ -372,18 +526,16 @@ def prepare_ligand(ligand_file, ligand_charge, output_dir='prep'):
         '-pf', 'y'
     ]
     
-    result = subprocess.run(cmd_antechamber, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0 or not os.path.exists(mol2_out):
-        print(f"  WARNING: Antechamber failed: {result.stderr}")
-        print("  Trying with sqm charges...")
-        cmd_antechamber[cmd_antechamber.index('bcc')] = 'gas'
-        result = subprocess.run(cmd_antechamber, capture_output=True, text=True)
+        print(f"  WARNING: Antechamber BCC failed, trying gas charges...")
+        cmd[cmd.index('bcc')] = 'gas'
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            print(f"  ERROR: Antechamber failed completely")
+            print(f"  ERROR: Antechamber failed: {result.stderr}")
             return None, None
     
-    # Run parmchk2 for missing parameters
-    print("  Running parmchk2 for missing parameters...")
+    print("  Running parmchk2...")
     cmd_parmchk = [
         'parmchk2',
         '-i', mol2_out,
@@ -391,10 +543,7 @@ def prepare_ligand(ligand_file, ligand_charge, output_dir='prep'):
         '-o', frcmod_out,
         '-s', 'gaff2'
     ]
-    
-    result = subprocess.run(cmd_parmchk, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"  WARNING: parmchk2 warning: {result.stderr}")
+    subprocess.run(cmd_parmchk, capture_output=True, text=True)
     
     print(f"  Ligand prepared: {mol2_out}")
     return mol2_out, frcmod_out
@@ -405,7 +554,7 @@ def prepare_ligand(ligand_file, ligand_charge, output_dir='prep'):
 # =============================================================================
 
 def prepare_protein(pdb_file, remove_waters, output_dir='prep'):
-    """Prepare protein with pdb4amber, handling KCX residues and Zn ions"""
+    """Prepare protein with pdb4amber"""
     print(f"\n{'='*60}")
     print(f"PROTEIN PREPARATION")
     print(f"{'='*60}")
@@ -413,19 +562,17 @@ def prepare_protein(pdb_file, remove_waters, output_dir='prep'):
     
     os.makedirs(output_dir, exist_ok=True)
     
-    # Read PDB and check for special residues
     with open(pdb_file, 'r') as f:
         pdb_content = f.read()
     
     has_kcx = 'KCX' in pdb_content
     has_zn = ' ZN ' in pdb_content or 'ZN2' in pdb_content
     
-    print(f"  Contains KCX (carboxylated lysine): {has_kcx}")
-    print(f"  Contains Zn2+ ions: {has_zn}")
+    print(f"  Contains KCX: {has_kcx}")
+    print(f"  Contains Zn: {has_zn}")
     
     protein_out = os.path.join(output_dir, 'protein.pdb')
     
-    # Run pdb4amber
     cmd = ['pdb4amber', '-i', pdb_file, '-o', protein_out]
     if remove_waters == 'yes':
         cmd.append('--dry')
@@ -433,7 +580,6 @@ def prepare_protein(pdb_file, remove_waters, output_dir='prep'):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  WARNING: pdb4amber warning: {result.stderr}")
-        # Copy original file if pdb4amber fails
         shutil.copy(pdb_file, protein_out)
     
     print(f"  Protein prepared: {protein_out}")
@@ -446,145 +592,86 @@ def prepare_protein(pdb_file, remove_waters, output_dir='prep'):
 
 def create_tleap_input(settings, protein_pdb, ligand_mol2, ligand_frcmod, 
                        kcx_frcmod, kcx_lib, has_kcx, has_zn):
-    """Create tleap input script for system building"""
+    """Create tleap input script"""
     
-    # Select force field files
-    if settings.forceField == 'ff19SB':
-        ff_protein = 'leaprc.protein.ff19SB'
-    else:
-        ff_protein = 'leaprc.protein.ff14SB'
+    ff_protein = 'leaprc.protein.ff19SB' if settings.forceField == 'ff19SB' else 'leaprc.protein.ff14SB'
     
-    # Select water model
     water_models = {
         'tip3p': 'leaprc.water.tip3p',
-        'tip3pfb': 'leaprc.water.tip3p',
-        'tip4pew': 'leaprc.water.tip4pew',
-        'tip4pfb': 'leaprc.water.tip4pew',
-        'spce': 'leaprc.water.spce',
         'opc': 'leaprc.water.opc',
-        'opc3': 'leaprc.water.opc3'
+        'spce': 'leaprc.water.spce',
     }
     ff_water = water_models.get(settings.waterModel, 'leaprc.water.tip3p')
     
-    # Map ion names for tleap
-    ion_map = {
-        'Na+': 'Na+', 'K+': 'K+', 'Li+': 'Li+', 'Cs+': 'Cs+', 'Rb+': 'Rb+',
-        'Cl-': 'Cl-', 'Br-': 'Br-', 'F-': 'F-', 'I-': 'I-'
-    }
-    pos_ion = ion_map.get(settings.positiveIon, 'Na+')
-    neg_ion = ion_map.get(settings.negativeIon, 'Cl-')
-    
-    # Calculate number of ions for ionic strength
     n_ions = max(1, int(settings.ionicStrength * 60))
     
-    # Box size in Angstroms
-    box_size = settings.boxSize
-    
     script = f"""# tleap input for OpenMM-KCX system
-# Force fields
 source {ff_protein}
 source {ff_water}
 source leaprc.gaff2
 """
     
-    # Load KCX parameters if needed
     if has_kcx:
         script += f"""
-# Load KCX (carboxylated lysine) parameters
 loadamberparams {kcx_frcmod}
 loadoff {kcx_lib}
 """
     
-    # Load Zn parameters if needed
     if has_zn:
         script += """
-# Load Zn2+ parameters
 loadamberparams frcmod.ions234lm_126_tip3p
 """
     
-    # Load ligand if present
     if ligand_mol2 and os.path.exists(ligand_mol2):
         script += f"""
-# Load ligand
 loadamberparams {ligand_frcmod}
 LIG = loadmol2 {ligand_mol2}
 """
     
-    # Load protein
     script += f"""
-# Load protein
 mol = loadpdb {protein_pdb}
-check mol
 """
     
-    # Combine protein and ligand
     if ligand_mol2 and os.path.exists(ligand_mol2):
-        script += """
-# Combine protein and ligand
-complex = combine {mol LIG}
-"""
+        script += "complex = combine {mol LIG}\n"
     else:
-        script += """
-# Use protein only
-complex = mol
-"""
+        script += "complex = mol\n"
     
-    # Solvate based on box shape
     if settings.boxShape == 'octahedron':
-        script += f"""
-# Solvate with truncated octahedron
-solvateOct complex TIP3PBOX {box_size}
-"""
+        script += f"solvateOct complex TIP3PBOX {settings.boxSize}\n"
     else:
-        script += f"""
-# Solvate with cubic box
-solvatebox complex TIP3PBOX {box_size}
-"""
+        script += f"solvatebox complex TIP3PBOX {settings.boxSize}\n"
     
-    # Add ions
     script += f"""
-# Neutralize and add ions
-addions complex {pos_ion} 0
-addions complex {neg_ion} 0
-addions complex {pos_ion} {n_ions}
-addions complex {neg_ion} {n_ions}
+addions complex Na+ 0
+addions complex Cl- 0
+addions complex Na+ {n_ions}
+addions complex Cl- {n_ions}
 
-# Check and save
 check complex
-
-# Save AMBER files
 saveamberparm complex system.prmtop system.inpcrd
-
-# Save PDB for reference
 savepdb complex system.pdb
-
 quit
 """
     
-    # Write tleap input file
-    tleap_file = 'tleap.in'
-    with open(tleap_file, 'w') as f:
+    with open('tleap.in', 'w') as f:
         f.write(script)
     
-    return tleap_file
+    return 'tleap.in'
 
 
 def run_tleap(tleap_file):
-    """Run tleap to build the system"""
+    """Run tleap"""
     print(f"\n{'='*60}")
     print(f"RUNNING TLEAP")
     print(f"{'='*60}")
     
     result = subprocess.run(['tleap', '-f', tleap_file], capture_output=True, text=True)
-    
     print(result.stdout)
-    if result.stderr:
-        print("STDERR:", result.stderr)
     
-    # Check if output files were created
     if not os.path.exists('system.prmtop') or not os.path.exists('system.inpcrd'):
-        print("ERROR: tleap failed to create topology files!")
-        print("Check tleap.log for details")
+        print("ERROR: tleap failed!")
+        print(result.stderr)
         sys.exit(1)
     
     print("  System built successfully!")
@@ -596,201 +683,111 @@ def run_tleap(tleap_file):
 # =============================================================================
 
 def run_simulation(settings):
-    """Run OpenMM MD simulation with all specified parameters"""
+    """Run OpenMM MD simulation"""
     print(f"\n{'='*60}")
     print(f"OPENMM SIMULATION")
     print(f"{'='*60}")
     
-    # Import OpenMM
     import openmm as mm
     import openmm.app as app
     import openmm.unit as unit
     
-    # Create output directory
     os.makedirs('out', exist_ok=True)
     
-    # Load AMBER files
-    print("Loading AMBER topology and coordinates...")
+    print("Loading topology...")
     prmtop = app.AmberPrmtopFile('system.prmtop')
     inpcrd = app.AmberInpcrdFile('system.inpcrd')
     
-    # Create System
-    print("Creating OpenMM system...")
+    print("Creating system...")
+    nb_methods = {'PME': app.PME, 'NoCutoff': app.NoCutoff, 'CutoffPeriodic': app.CutoffPeriodic}
+    constraints = {'HBonds': app.HBonds, 'AllBonds': app.AllBonds, 'None': None}
     
-    # Nonbonded method
-    nb_methods = {
-        'PME': app.PME,
-        'NoCutoff': app.NoCutoff,
-        'CutoffPeriodic': app.CutoffPeriodic,
-        'LJPME': app.LJPME
-    }
-    nonbonded_method = nb_methods.get(settings.nonbondedMethod, app.PME)
+    system = prmtop.createSystem(
+        nonbondedMethod=nb_methods.get(settings.nonbondedMethod, app.PME),
+        nonbondedCutoff=settings.nonbondedCutoff * unit.nanometer,
+        constraints=constraints.get(settings.constraints, app.HBonds),
+        rigidWater=settings.rigidWater == 'yes'
+    )
     
-    # Constraints
-    constraint_types = {
-        'None': None,
-        'HBonds': app.HBonds,
-        'AllBonds': app.AllBonds,
-        'HAngles': app.HAngles
-    }
-    constraints = constraint_types.get(settings.constraints, app.HBonds)
-    
-    # Create system with specified parameters
-    system_kwargs = {
-        'nonbondedMethod': nonbonded_method,
-        'nonbondedCutoff': settings.nonbondedCutoff * unit.nanometer,
-        'constraints': constraints,
-        'rigidWater': settings.rigidWater == 'yes'
-    }
-    
-    # Add hydrogen mass repartitioning if specified
-    if settings.hydrogenMass is not None:
-        system_kwargs['hydrogenMass'] = settings.hydrogenMass * unit.amu
-    
-    system = prmtop.createSystem(**system_kwargs)
-    
-    # Set PME parameters if using PME
-    if settings.nonbondedMethod in ['PME', 'LJPME']:
-        for force in system.getForces():
-            if isinstance(force, mm.NonbondedForce):
-                force.setEwaldErrorTolerance(settings.ewaldErrorTolerance)
-                if settings.switchDistance is not None:
-                    force.setUseSwitchingFunction(True)
-                    force.setSwitchingDistance(settings.switchDistance * unit.nanometer)
-    
-    # Add barostat for NPT
     system.addForce(mm.MonteCarloBarostat(
         settings.pressure * unit.bar,
         settings.temperature * unit.kelvin,
         settings.barostatInterval
     ))
     
-    # Create Integrator
     print(f"Creating {settings.integrator} integrator...")
-    
     timestep = settings.timestep * unit.femtosecond
     temperature = settings.temperature * unit.kelvin
     friction = settings.frictionCoeff / unit.picosecond
     
-    if settings.integrator == 'LangevinMiddle':
-        integrator = mm.LangevinMiddleIntegrator(temperature, friction, timestep)
-    elif settings.integrator == 'Langevin':
-        integrator = mm.LangevinIntegrator(temperature, friction, timestep)
-    elif settings.integrator == 'NoseHoover':
-        integrator = mm.NoseHooverIntegrator(temperature, friction, timestep)
-    elif settings.integrator == 'Verlet':
-        integrator = mm.VerletIntegrator(timestep)
-        system.addForce(mm.AndersenThermostat(temperature, friction))
-    elif settings.integrator == 'Brownian':
-        integrator = mm.BrownianIntegrator(temperature, friction, timestep)
-    else:
-        integrator = mm.LangevinMiddleIntegrator(temperature, friction, timestep)
+    integrator = mm.LangevinMiddleIntegrator(temperature, friction, timestep)
     
-    # Create Simulation
     print("Setting up simulation...")
-    
-    # Try CUDA, fall back to CPU
     try:
         platform = mm.Platform.getPlatformByName('CUDA')
         properties = {'CudaPrecision': 'mixed'}
-        print("  Using CUDA platform")
-    except Exception:
+        print("  Using CUDA")
+    except:
         try:
             platform = mm.Platform.getPlatformByName('OpenCL')
             properties = {}
-            print("  Using OpenCL platform")
-        except Exception:
+            print("  Using OpenCL")
+        except:
             platform = mm.Platform.getPlatformByName('CPU')
             properties = {}
-            print("  Using CPU platform")
+            print("  Using CPU")
     
     simulation = app.Simulation(prmtop.topology, system, integrator, platform, properties)
     simulation.context.setPositions(inpcrd.positions)
-    
-    if inpcrd.boxVectors is not None:
+    if inpcrd.boxVectors:
         simulation.context.setPeriodicBoxVectors(*inpcrd.boxVectors)
     
-    # Energy Minimization
-    print(f"\nMinimizing energy ({settings.minimizationSteps} steps max)...")
+    # Minimization
+    print(f"\nMinimizing ({settings.minimizationSteps} steps)...")
+    simulation.minimizeEnergy(maxIterations=settings.minimizationSteps)
     
-    initial_state = simulation.context.getState(getEnergy=True)
-    print(f"  Initial energy: {initial_state.getPotentialEnergy()}")
-    
-    simulation.minimizeEnergy(
-        tolerance=settings.minimizationTolerance * unit.kilojoule_per_mole / unit.nanometer,
-        maxIterations=settings.minimizationSteps
-    )
-    
-    final_state = simulation.context.getState(getEnergy=True, getPositions=True)
-    print(f"  Final energy: {final_state.getPotentialEnergy()}")
-    
-    # Save minimized structure
+    state = simulation.context.getState(getPositions=True)
     with open('out/minimized.pdb', 'w') as f:
-        app.PDBFile.writeFile(simulation.topology, final_state.getPositions(), f)
+        app.PDBFile.writeFile(simulation.topology, state.getPositions(), f)
     
     # Equilibration
     equil_steps = int(settings.equilibrationTime * 1e6 / settings.timestep)
-    print(f"\nEquilibrating for {settings.equilibrationTime} ns ({equil_steps} steps)...")
+    print(f"\nEquilibrating ({settings.equilibrationTime} ns)...")
     
-    # Add reporters for equilibration
     simulation.reporters.append(app.StateDataReporter(
         'out/equilibration.log', settings.equilTrajFreq,
-        step=True, time=True, potentialEnergy=True, kineticEnergy=True,
-        temperature=True, volume=True, density=True,
-        progress=True, remainingTime=True, speed=True,
-        totalSteps=equil_steps
+        step=True, time=True, potentialEnergy=True, temperature=True, speed=True
     ))
-    
-    if settings.trajectoryFormat == 'DCD':
-        simulation.reporters.append(app.DCDReporter('out/equilibration.dcd', settings.equilTrajFreq))
-    elif settings.trajectoryFormat == 'XTC':
-        simulation.reporters.append(app.XTCReporter('out/equilibration.xtc', settings.equilTrajFreq))
-    
     simulation.step(equil_steps)
-    
-    # Clear reporters
     simulation.reporters.clear()
     
     # Production
     prod_steps = int(settings.productionTime * 1e6 / settings.timestep)
-    print(f"\nRunning production for {settings.productionTime} ns ({prod_steps} steps)...")
+    print(f"\nProduction ({settings.productionTime} ns)...")
     
-    # Add reporters for production
     simulation.reporters.append(app.StateDataReporter(
         'out/production.log', settings.prodTrajFreq,
-        step=True, time=True, potentialEnergy=True, kineticEnergy=True,
-        temperature=True, volume=True, density=True,
-        progress=True, remainingTime=True, speed=True,
-        totalSteps=prod_steps
+        step=True, time=True, potentialEnergy=True, temperature=True, speed=True
     ))
-    
-    if settings.trajectoryFormat == 'DCD':
-        simulation.reporters.append(app.DCDReporter('out/production.dcd', settings.prodTrajFreq))
-    elif settings.trajectoryFormat == 'XTC':
-        simulation.reporters.append(app.XTCReporter('out/production.xtc', settings.prodTrajFreq))
-    else:
-        simulation.reporters.append(app.PDBReporter('out/production.pdb', settings.prodTrajFreq))
-    
+    simulation.reporters.append(app.DCDReporter('out/production.dcd', settings.prodTrajFreq))
     simulation.reporters.append(app.CheckpointReporter('out/checkpoint.chk', settings.checkpointFreq))
     
     simulation.step(prod_steps)
     
-    # Save final structure
-    state = simulation.context.getState(getPositions=True, getVelocities=True)
+    # Save final
+    state = simulation.context.getState(getPositions=True)
     with open('out/final.pdb', 'w') as f:
         app.PDBFile.writeFile(simulation.topology, state.getPositions(), f)
-    
-    simulation.saveState('out/final_state.xml')
     
     print("\nSimulation complete!")
 
 
 # =============================================================================
-# TRAJECTORY ANALYSIS
+# ANALYSIS
 # =============================================================================
 
 def run_analysis(settings):
-    """Run trajectory analysis with MDTraj"""
+    """Run trajectory analysis"""
     print(f"\n{'='*60}")
     print(f"TRAJECTORY ANALYSIS")
     print(f"{'='*60}")
@@ -802,72 +799,47 @@ def run_analysis(settings):
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
     except ImportError as e:
-        print(f"  WARNING: Analysis skipped - missing package: {e}")
+        print(f"  Skipping analysis: {e}")
         return
     
-    # Determine trajectory file
-    if settings.trajectoryFormat == 'DCD':
-        traj_file = 'out/production.dcd'
-    elif settings.trajectoryFormat == 'XTC':
-        traj_file = 'out/production.xtc'
-    else:
-        traj_file = 'out/production.pdb'
-    
-    if not os.path.exists(traj_file):
-        print(f"  Trajectory file not found: {traj_file}")
+    if not os.path.exists('out/production.dcd'):
+        print("  No trajectory found")
         return
     
-    print(f"  Loading trajectory: {traj_file}")
-    traj = md.load(traj_file, top='system.pdb', stride=settings.stepSize)
+    print("  Loading trajectory...")
+    traj = md.load('out/production.dcd', top='system.pdb', stride=settings.stepSize)
     print(f"  Frames: {traj.n_frames}")
-    print(f"  Atoms: {traj.n_atoms}")
     
     # RMSD
     print("  Calculating RMSD...")
+    rmsd_atoms = traj.topology.select('backbone')
+    rmsd = md.rmsd(traj, traj, 0, atom_indices=rmsd_atoms) * 10
+    time_ns = traj.time / 1000
     
-    if settings.rmsdMask == 'backbone':
-        rmsd_atoms = traj.topology.select('backbone')
-    elif settings.rmsdMask == 'heavy':
-        rmsd_atoms = traj.topology.select('mass > 2')
-    elif settings.rmsdMask == 'protein':
-        rmsd_atoms = traj.topology.select('protein')
-    else:
-        rmsd_atoms = traj.topology.select('all')
-    
-    rmsd = md.rmsd(traj, traj, 0, atom_indices=rmsd_atoms) * 10  # nm to Å
-    time_ns = traj.time / 1000  # ps to ns
-    
-    np.savetxt('out/rmsd.csv', 
-               np.column_stack([time_ns, rmsd]),
-               delimiter=',', header='time_ns,rmsd_angstrom', comments='')
+    np.savetxt('out/rmsd.csv', np.column_stack([time_ns, rmsd]), 
+               delimiter=',', header='time_ns,rmsd_A', comments='')
     
     plt.figure(figsize=(10, 6))
-    plt.plot(time_ns, rmsd, 'b-', linewidth=0.5)
-    plt.xlabel('Time (ns)', fontsize=12)
-    plt.ylabel('RMSD (Å)', fontsize=12)
-    plt.title(f'Backbone RMSD (mean: {np.mean(rmsd):.2f} Å)', fontsize=14)
-    plt.tight_layout()
+    plt.plot(time_ns, rmsd)
+    plt.xlabel('Time (ns)')
+    plt.ylabel('RMSD (Å)')
     plt.savefig('out/rmsd.png', dpi=150)
     plt.close()
     
     # RMSF
     print("  Calculating RMSF...")
-    
     ca_atoms = traj.topology.select('name CA')
     if len(ca_atoms) > 0:
-        rmsf = md.rmsf(traj, traj, 0, atom_indices=ca_atoms) * 10  # nm to Å
+        rmsf = md.rmsf(traj, traj, 0, atom_indices=ca_atoms) * 10
         residues = [traj.topology.atom(i).residue.resSeq for i in ca_atoms]
         
-        np.savetxt('out/rmsf.csv',
-                   np.column_stack([residues, rmsf]),
-                   delimiter=',', header='residue,rmsf_angstrom', comments='')
+        np.savetxt('out/rmsf.csv', np.column_stack([residues, rmsf]),
+                   delimiter=',', header='residue,rmsf_A', comments='')
         
         plt.figure(figsize=(12, 6))
-        plt.plot(residues, rmsf, 'b-', linewidth=1)
-        plt.xlabel('Residue Number', fontsize=12)
-        plt.ylabel('RMSF (Å)', fontsize=12)
-        plt.title(f'Per-Residue RMSF (mean: {np.mean(rmsf):.2f} Å)', fontsize=14)
-        plt.tight_layout()
+        plt.plot(residues, rmsf)
+        plt.xlabel('Residue')
+        plt.ylabel('RMSF (Å)')
         plt.savefig('out/rmsf.png', dpi=150)
         plt.close()
     
@@ -879,127 +851,72 @@ def run_analysis(settings):
 # =============================================================================
 
 def main():
-    # Debug: Print all environment variables and inputs.json
     print("="*70)
-    print("  DEBUG: Environment and Inputs")
+    print("  OpenMM MD Simulation with KCX Support - v7")
     print("="*70)
     
-    # Print all environment variables
-    print("\nEnvironment variables:")
-    for key, value in sorted(os.environ.items()):
-        if any(x in key.lower() for x in ['pdb', 'ligand', 'file', 'input', 'tamarind', 'job']):
-            print(f"  {key}={value}")
+    # Debug output
+    print("\nEnvironment variables (file-related):")
+    for key in ['pdbFile', 'ligandFile', 'ligandCharge', 'productionTime', 
+                'JobName', 'TAMARIND_API_KEY', 'API_KEY']:
+        print(f"  {key} = {os.getenv(key)}")
     
-    # Print inputs.json contents
-    if os.path.exists('inputs/inputs.json'):
-        print("\nContents of inputs/inputs.json:")
-        with open('inputs/inputs.json', 'r') as f:
-            content = f.read()
-            print(content)
-    
-    # List all files in inputs/
-    print("\nAll files in inputs/:")
+    print("\nFiles in inputs/:")
     if os.path.exists('inputs'):
         for f in os.listdir('inputs'):
-            fpath = f'inputs/{f}'
-            size = os.path.getsize(fpath) if os.path.isfile(fpath) else 'DIR'
-            print(f"  {f} ({size} bytes)")
+            print(f"  {f}")
     
-    # List all files in current directory
-    print("\nAll files in working directory:")
-    for f in os.listdir('.'):
-        print(f"  {f}")
+    if os.path.exists('inputs/inputs.json'):
+        print("\ninputs.json content:")
+        with open('inputs/inputs.json') as f:
+            print(f.read())
     
+    # Get settings
+    settings = Settings(get_settings())
+    
+    print("\n" + "="*70)
+    print("SIMULATION PARAMETERS:")
+    print("-"*70)
+    print(f"  PDB file:       {settings.pdbFile}")
+    print(f"  Ligand file:    {settings.ligandFile}")
+    print(f"  Production:     {settings.productionTime} ns")
+    print(f"  Temperature:    {settings.temperature} K")
     print("="*70)
     
-    # Get settings from environment variables (Tamarind convention)
-    settings_dict = get_settings()
-    settings = Settings(settings_dict)
-    
-    print("="*70)
-    print("  OpenMM MD Simulation with KCX Support - v6 (Tamarind)")
-    print("="*70)
-    print(f"\nJob Name: {settings.jobName}")
-    print("\nSIMULATION PARAMETERS:")
-    print("-"*70)
-    print(f"  Input PDB:           {settings.pdbFile}")
-    print(f"  Ligand file:         {settings.ligandFile}")
-    print(f"  Ligand charge:       {settings.ligandCharge}")
-    print("-"*70)
-    print(f"  Force field:         {settings.forceField}")
-    print(f"  Water model:         {settings.waterModel}")
-    print(f"  Box size:            {settings.boxSize} Å")
-    print(f"  Box shape:           {settings.boxShape}")
-    print(f"  Ionic strength:      {settings.ionicStrength} M")
-    print(f"  pH:                  {settings.pH}")
-    print("-"*70)
-    print(f"  Minimization steps:  {settings.minimizationSteps}")
-    print(f"  Equilibration:       {settings.equilibrationTime} ns")
-    print(f"  Production:          {settings.productionTime} ns")
-    print(f"  Timestep:            {settings.timestep} fs")
-    print(f"  Temperature:         {settings.temperature} K")
-    print(f"  Pressure:            {settings.pressure} bar")
-    print("-"*70)
-    print(f"  Integrator:          {settings.integrator}")
-    print(f"  Constraints:         {settings.constraints}")
-    print(f"  Nonbonded method:    {settings.nonbondedMethod}")
-    print(f"  Cutoff:              {settings.nonbondedCutoff} nm")
-    print("="*70)
-    
-    # Check input file exists
+    # Check PDB file
     if settings.pdbFile is None or not os.path.exists(settings.pdbFile):
-        print(f"ERROR: PDB file not found!")
-        print(f"  Looked for: inputs/pdbFile (with or without .pdb/.cif/.ent extension)")
-        print("Available files in inputs/:")
-        if os.path.exists('inputs'):
-            for f in os.listdir('inputs'):
-                print(f"  {f}")
-        else:
-            print("  (inputs/ directory does not exist)")
+        print("\nERROR: PDB file not found!")
+        print("The file needs to be fetched from Tamarind's file storage.")
+        print("Make sure TAMARIND_API_KEY is set in the container environment.")
         sys.exit(1)
     
-    # Write KCX parameters
+    # Setup and run
     kcx_frcmod, kcx_lib = write_kcx_parameters('params')
     
-    # Prepare ligand if provided
     ligand_mol2, ligand_frcmod = None, None
     if settings.ligandFile and os.path.exists(settings.ligandFile):
         ligand_mol2, ligand_frcmod = prepare_ligand(
             settings.ligandFile, settings.ligandCharge, 'prep'
         )
     
-    # Prepare protein
     protein_pdb, has_kcx, has_zn = prepare_protein(
         settings.pdbFile, settings.removeWaters, 'prep'
     )
     
-    # Create tleap input
     tleap_file = create_tleap_input(
         settings, protein_pdb, ligand_mol2, ligand_frcmod,
         kcx_frcmod, kcx_lib, has_kcx, has_zn
     )
     
-    # Run tleap
     run_tleap(tleap_file)
-    
-    # Run simulation
     run_simulation(settings)
-    
-    # Run analysis
     run_analysis(settings)
     
     print("\n" + "="*70)
     print("  ALL DONE!")
     print("="*70)
-    print("\nOutput files in out/:")
-    print("  - minimized.pdb      : Minimized structure")
-    print("  - equilibration.*    : Equilibration trajectory")
-    print("  - production.*       : Production trajectory")
-    print("  - final.pdb          : Final structure")
-    print("  - rmsd.csv/png       : RMSD analysis")
-    print("  - rmsf.csv/png       : RMSF analysis")
-    print("="*70)
 
 
 if __name__ == '__main__':
     main()
+    
