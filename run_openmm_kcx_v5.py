@@ -22,13 +22,27 @@ import glob
 from pathlib import Path
 
 # =============================================================================
-# FILE DETECTION - Handle Tamarind's extension-less file uploads
+# FILE DETECTION - Handle Tamarind's file input methods
 # =============================================================================
+
+def load_inputs_json():
+    """Load inputs.json which contains file references from Tamarind"""
+    inputs_json_path = 'inputs/inputs.json'
+    if os.path.exists(inputs_json_path):
+        with open(inputs_json_path, 'r') as f:
+            data = json.load(f)
+            print(f"Loaded inputs.json: {json.dumps(data, indent=2)}")
+            return data
+    return {}
 
 def find_input_file(setting_name, extensions=None):
     """
     Find an input file in Tamarind's inputs/ directory.
-    Tamarind may upload files with or without extensions.
+    
+    Tamarind has multiple ways of providing files:
+    1. Direct file at inputs/<settingName> (with or without extension)
+    2. File reference in inputs/inputs.json
+    3. Environment variable pointing to file path
     
     Args:
         setting_name: The base name (e.g., 'pdbFile')
@@ -40,9 +54,29 @@ def find_input_file(setting_name, extensions=None):
     if extensions is None:
         extensions = []
     
+    # Method 1: Check inputs.json for file references
+    inputs_data = load_inputs_json()
+    if setting_name in inputs_data:
+        file_ref = inputs_data[setting_name]
+        print(f"Found {setting_name} in inputs.json: {file_ref}")
+        # If it's a path that exists, use it
+        if isinstance(file_ref, str) and os.path.exists(file_ref):
+            return file_ref
+        # If it's a dict with 'path' key
+        if isinstance(file_ref, dict) and 'path' in file_ref:
+            if os.path.exists(file_ref['path']):
+                return file_ref['path']
+    
+    # Method 2: Check environment variable
+    env_value = os.getenv(setting_name)
+    if env_value and os.path.exists(env_value):
+        print(f"Found {setting_name} from env var: {env_value}")
+        return env_value
+    
+    # Method 3: Direct file at inputs/<settingName>
     base_path = f'inputs/{setting_name}'
     
-    # First check if file exists without extension (Tamarind default)
+    # Check without extension first (Tamarind default)
     if os.path.exists(base_path) and os.path.isfile(base_path):
         print(f"Found input file: {base_path}")
         return base_path
@@ -53,6 +87,23 @@ def find_input_file(setting_name, extensions=None):
         if os.path.exists(path_with_ext) and os.path.isfile(path_with_ext):
             print(f"Found input file: {path_with_ext}")
             return path_with_ext
+    
+    # Method 4: Check all files in inputs/ directory for matching names
+    if os.path.exists('inputs'):
+        for filename in os.listdir('inputs'):
+            if filename == 'inputs.json':
+                continue
+            # Check if filename starts with setting_name
+            if filename.startswith(setting_name):
+                file_path = f'inputs/{filename}'
+                print(f"Found matching file: {file_path}")
+                return file_path
+            # Check if any extension matches
+            for ext in extensions:
+                if filename.endswith(ext):
+                    file_path = f'inputs/{filename}'
+                    print(f"Found file with matching extension: {file_path}")
+                    return file_path
     
     # List what's in the inputs directory for debugging
     if os.path.exists('inputs'):
@@ -828,6 +879,39 @@ def run_analysis(settings):
 # =============================================================================
 
 def main():
+    # Debug: Print all environment variables and inputs.json
+    print("="*70)
+    print("  DEBUG: Environment and Inputs")
+    print("="*70)
+    
+    # Print all environment variables
+    print("\nEnvironment variables:")
+    for key, value in sorted(os.environ.items()):
+        if any(x in key.lower() for x in ['pdb', 'ligand', 'file', 'input', 'tamarind', 'job']):
+            print(f"  {key}={value}")
+    
+    # Print inputs.json contents
+    if os.path.exists('inputs/inputs.json'):
+        print("\nContents of inputs/inputs.json:")
+        with open('inputs/inputs.json', 'r') as f:
+            content = f.read()
+            print(content)
+    
+    # List all files in inputs/
+    print("\nAll files in inputs/:")
+    if os.path.exists('inputs'):
+        for f in os.listdir('inputs'):
+            fpath = f'inputs/{f}'
+            size = os.path.getsize(fpath) if os.path.isfile(fpath) else 'DIR'
+            print(f"  {f} ({size} bytes)")
+    
+    # List all files in current directory
+    print("\nAll files in working directory:")
+    for f in os.listdir('.'):
+        print(f"  {f}")
+    
+    print("="*70)
+    
     # Get settings from environment variables (Tamarind convention)
     settings_dict = get_settings()
     settings = Settings(settings_dict)
@@ -919,4 +1003,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
