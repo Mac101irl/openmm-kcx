@@ -45,7 +45,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /opt/conda /opt/conda
 
-# FIXED:  Removed extra space in PATH
 ENV PATH="/opt/conda/bin:$PATH"
 ENV AMBERHOME="/opt/conda"
 ENV LD_LIBRARY_PATH="/opt/conda/lib:$LD_LIBRARY_PATH"
@@ -53,9 +52,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Copy KCX parameter files into the image
+# Create kcx_params directory
+RUN mkdir -p /app/kcx_params
+
+# Copy KCX parameter files into the image (FIXED:  removed spaces)
 COPY kcx. lib /app/kcx_params/kcx.lib
-COPY kcx.frcmod /app/kcx_params/kcx.frcmod
+COPY kcx. frcmod /app/kcx_params/kcx.frcmod
 
 # Copy main script
 COPY run_openmm_kcx_v5.py /app/run_openmm_kcx_v5.py
