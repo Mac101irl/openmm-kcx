@@ -45,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /opt/conda /opt/conda
 
-ENV PATH="/opt/conda/bin: $PATH"
+ENV PATH="/opt/conda/bin:$PATH
 ENV AMBERHOME="/opt/conda"
 ENV LD_LIBRARY_PATH="/opt/conda/lib:$LD_LIBRARY_PATH"
 ENV PYTHONUNBUFFERED=1
@@ -56,7 +56,7 @@ WORKDIR /app
 RUN mkdir -p /app/kcx_params
 
 # Copy KCX parameter files into the image
-COPY kcx. lib /app/kcx_params/kcx.lib
+COPY kcx.lib /app/kcx_params/kcx.lib
 COPY kcx.frcmod /app/kcx_params/kcx.frcmod
 
 # Copy main script
