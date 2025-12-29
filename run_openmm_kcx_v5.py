@@ -14,6 +14,7 @@ Updates in this version:
 - Proper matplotlib backend for headless operation
 - Pre-bundled KCX parameters from Docker image
 - Robust directory creation
+- GPU optimization aligned with Dockerfile ENV variables
 """
 
 import os
@@ -36,7 +37,7 @@ LIGAND_FILE_INPUT = "/inputs/ligandFile"
 OUTPUT_DIR = "/outputs"
 
 # Define subdirectories for organization
-PREP_DIR = os. path.join(OUTPUT_DIR, "prep")
+PREP_DIR = os.path.join(OUTPUT_DIR, "prep")
 PARAMS_DIR = os.path.join(OUTPUT_DIR, "params")
 
 # KCX parameters bundled in Docker image
@@ -55,11 +56,15 @@ minimization_steps = int(os.getenv('minimizationSteps', '10000'))
 equilibration_time = float(os.getenv('equilibrationTime', '0.2'))
 production_time = float(os.getenv('productionTime', '1.0'))
 timestep = float(os.getenv('timestep', '2.0'))
-temperature = float(os. getenv('temperature', '310.0'))
+temperature = float(os.getenv('temperature', '310.0'))
 pressure = float(os.getenv('pressure', '1.0'))
 constraints = os.getenv('constraints', 'HBonds')
 prod_traj_freq = int(os.getenv('prodTrajFreq', '5000'))
 step_size = int(os.getenv('stepSize', '5'))
+
+# GPU Configuration from environment (set in Dockerfile)
+cuda_precision = os.getenv('CUDA_PRECISION', 'mixed')
+default_platform = os.getenv('OPENMM_DEFAULT_PLATFORM', 'CUDA')
 
 # =============================================================================
 # UTILITY FUNCTIONS
@@ -67,7 +72,7 @@ step_size = int(os.getenv('stepSize', '5'))
 
 def run_command(cmd, description):
     """Run subprocess command with error handling"""
-    print(f"--> Running:  {description}")
+    print(f"--> Running: {description}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"ERROR in {description}:")
@@ -76,16 +81,28 @@ def run_command(cmd, description):
         sys.exit(1)
     return result
 
+def print_gpu_info():
+    """Print GPU information for debugging"""
+    print("\n--> GPU Environment Configuration:")
+    gpu_vars = [
+        'NVIDIA_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES',
+        'OPENMM_DEFAULT_PLATFORM', 'CUDA_CACHE_DISABLE',
+        'CUDA_MPS_PIPE_DIRECTORY'
+    ]
+    for var in gpu_vars:
+        value = os.getenv(var, 'not set')
+        print(f"    {var}: {value}")
+
 # =============================================================================
 # KCX & SYSTEM PREP UTILITIES
 # =============================================================================
 
 def get_kcx_parameters():
     """Use pre-bundled KCX parameters from Docker image"""
-    frcmod_path = os.path. join(KCX_PARAMS_DIR, 'kcx.frcmod')
-    lib_path = os.path.join(KCX_PARAMS_DIR, 'kcx.lib')
+    frcmod_path = os.path.join(KCX_PARAMS_DIR, 'kcx.frcmod')
+    lib_path = os.path.join(KCX_PARAMS_DIR, 'kcx. lib')
     
-    if not os.path. exists(frcmod_path):
+    if not os.path.exists(frcmod_path):
         print(f"ERROR: KCX frcmod not found at {frcmod_path}")
         sys.exit(1)
     if not os.path.exists(lib_path):
@@ -141,7 +158,7 @@ def build_system(protein_pdb, lig_mol2, lig_frcmod, kcx_frcmod, kcx_lib, output_
     
     tleap_in = os.path.join(output_dir, 'tleap.in')
     prmtop = os.path.join(output_dir, 'system.prmtop')
-    inpcrd = os.path.join(output_dir, 'system. inpcrd')
+    inpcrd = os.path.join(output_dir, 'system.inpcrd')
     
     # Build TLeap script
     script = f"""source leaprc.protein.{force_field}
@@ -213,18 +230,26 @@ def run_simulation(prmtop_path, inpcrd_path):
     import openmm.app as app
     import openmm.unit as unit
 
+    # Print available platforms
+    print("--> Available OpenMM Platforms:")
+    for i in range(mm.Platform.getNumPlatforms()):
+        platform = mm.Platform. getPlatform(i)
+        print(f"    {i}: {platform.getName()}")
+
     # Load topology and coordinates
     print("--> Loading topology and coordinates")
     prmtop = app.AmberPrmtopFile(prmtop_path)
     inpcrd = app.AmberInpcrdFile(inpcrd_path)
 
-    # 1. System Creation
+    # 1. System Creation with optimized settings
     print("--> Creating system")
     system = prmtop.createSystem(
         nonbondedMethod=app.PME,
         nonbondedCutoff=1.0*unit.nanometer,
         constraints=app.HBonds if constraints == 'HBonds' else None,
-        rigidWater=True
+        rigidWater=True,
+        # Use HMR (Hydrogen Mass Repartitioning) for larger timesteps if needed
+        hydrogenMass=None  # Set to 4*unit.amu for 4fs timesteps
     )
     
     # Add barostat for NPT ensemble
@@ -242,31 +267,49 @@ def run_simulation(prmtop_path, inpcrd_path):
         timestep*unit.femtosecond
     )
 
-    # 3. Platform Configuration for A100
+    # 3. Platform Configuration for A100 (aligned with Dockerfile ENV)
     print("--> Configuring platform")
-    try:
-        platform = mm.Platform. getPlatformByName('CUDA')
-        # 'mixed' precision uses A100 Tensor Cores efficiently
-        properties = {'CudaPrecision':  'mixed'}
-        print(f"--> [SUCCESS] Using CUDA Platform with mixed precision")
-    except:
-        print("--> [FALLBACK] CUDA not found, using CPU")
-        platform = mm.Platform.getPlatformByName('CPU')
-        properties = {}
+    platform = None
+    properties = {}
+    
+    # Try platforms in order of preference
+    for platform_name in [default_platform, 'CUDA', 'OpenCL', 'CPU']:
+        try:
+            platform = mm.Platform.getPlatformByName(platform_name)
+            if platform_name in ['CUDA', 'OpenCL']:
+                properties = {
+                    'Precision': cuda_precision,  # 'mixed' uses Tensor Cores on A100
+                }
+                if platform_name == 'CUDA':
+                    # Additional CUDA-specific optimizations
+                    properties['DisablePmeStream'] = 'false'  # Enable async PME
+            print(f"--> [SUCCESS] Using {platform_name} Platform")
+            break
+        except Exception as e:
+            print(f"--> [INFO] {platform_name} not available:  {e}")
+            continue
+    
+    if platform is None: 
+        print("--> [ERROR] No suitable platform found!")
+        sys.exit(1)
 
     # 4. Create simulation context
-    sim = app.Simulation(prmtop. topology, system, integrator, platform, properties)
+    if properties:
+        sim = app.Simulation(prmtop.topology, system, integrator, platform, properties)
+    else:
+        sim = app.Simulation(prmtop.topology, system, integrator, platform)
+    
     sim.context.setPositions(inpcrd.positions)
     if inpcrd.boxVectors:
-        sim.context. setPeriodicBoxVectors(*inpcrd.boxVectors)
+        sim.context.setPeriodicBoxVectors(*inpcrd.boxVectors)
 
     # Diagnostic information
+    print(f"--> [PLATFORM] {platform.getName()}")
     if platform.getName() == 'CUDA':
-        dev_name = platform.getPropertyValue(sim.context, 'DeviceName')
-        dev_index = platform.getPropertyValue(sim.context, 'DeviceIndex')
-        print(f"--> [HARDWARE] Running on:  {dev_name} (Index: {dev_index})")
-    else:
-        print(f"--> [HARDWARE] Running on:  CPU")
+        print(f"    Device: {platform.getPropertyValue(sim.context, 'DeviceName')}")
+        print(f"    Device Index: {platform.getPropertyValue(sim.context, 'DeviceIndex')}")
+        print(f"    Precision: {platform.getPropertyValue(sim.context, 'Precision')}")
+        print(f"    CUDA Compiler: {platform.getPropertyValue(sim.context, 'CudaCompiler')}")
 
     # 5. Energy Minimization
     print("--> Minimizing energy...")
@@ -277,17 +320,25 @@ def run_simulation(prmtop_path, inpcrd_path):
     pot_energy = state.getPotentialEnergy()
     print(f"--> Minimization complete.  Potential Energy: {pot_energy}")
 
-    # 6. Production MD
+    # 6. Equilibration (NVT then NPT)
+    print("--> Running equilibration...")
+    equil_steps = int((equilibration_time * 1e6) / timestep)
+    print(f"    Equilibration steps: {equil_steps}")
+    sim.step(equil_steps)
+    print("--> Equilibration complete")
+
+    # 7. Production MD
     total_steps = int((production_time * 1e6) / timestep)
     print(f"--> Running Production MD:")
     print(f"    Duration: {production_time} ns")
     print(f"    Total steps: {total_steps}")
-    print(f"    Timestep: {timestep} fs")
+    print(f"    Timestep:  {timestep} fs")
     print(f"    Output frequency: {prod_traj_freq} steps")
     
     # Setup reporters
-    dcd_file = os.path. join(OUTPUT_DIR, 'trajectory.dcd')
+    dcd_file = os.path.join(OUTPUT_DIR, 'trajectory.dcd')
     log_file = os.path.join(OUTPUT_DIR, 'simulation.log')
+    checkpoint_file = os.path.join(OUTPUT_DIR, 'checkpoint.chk')
     
     sim.reporters.append(app.DCDReporter(dcd_file, prod_traj_freq))
     sim.reporters.append(app. StateDataReporter(
@@ -303,6 +354,9 @@ def run_simulation(prmtop_path, inpcrd_path):
         density=True,
         speed=True
     ))
+    
+    # Checkpoint reporter for restart capability
+    sim.reporters.append(app.CheckpointReporter(checkpoint_file, prod_traj_freq * 10))
     
     # Also print to stdout
     sim.reporters.append(app.StateDataReporter(
@@ -325,11 +379,15 @@ def run_simulation(prmtop_path, inpcrd_path):
     with open(final_pdb, 'w') as f:
         app.PDBFile.writeFile(sim.topology, state.getPositions(), f)
     
+    # Save final checkpoint
+    sim.saveCheckpoint(os.path.join(OUTPUT_DIR, 'final_checkpoint.chk'))
+    
     print(f"\n{'='*60}")
     print("--> Simulation Finished Successfully")
     print(f"    Trajectory:  {dcd_file}")
     print(f"    Final structure: {final_pdb}")
     print(f"    Log file: {log_file}")
+    print(f"    Checkpoint: {checkpoint_file}")
     print(f"{'='*60}\n")
     
     return dcd_file, final_pdb
@@ -350,7 +408,7 @@ def run_analysis(dcd_path, pdb_path):
         # Load trajectory
         print(f"    Loading trajectory: {dcd_path}")
         traj = md.load(dcd_path, top=pdb_path)
-        print(f"    Trajectory loaded: {traj.n_frames} frames, {traj.n_atoms} atoms")
+        print(f"    Trajectory loaded:  {traj.n_frames} frames, {traj.n_atoms} atoms")
         
         # Calculate RMSD for backbone atoms
         print("    Calculating backbone RMSD...")
@@ -366,7 +424,7 @@ def run_analysis(dcd_path, pdb_path):
         plt.plot(time_ns, rmsd_angstrom, linewidth=1. 5, color='#2E86AB')
         plt.xlabel('Time (ns)', fontsize=12)
         plt.ylabel('Backbone RMSD (Å)', fontsize=12)
-        plt.title(f'Backbone RMSD vs Time\nMean: {rmsd_angstrom. mean():.2f} Å, Max: {rmsd_angstrom.max():.2f} Å', 
+        plt.title(f'Backbone RMSD vs Time\nMean: {rmsd_angstrom.mean():.2f} Å, Max: {rmsd_angstrom.max():.2f} Å', 
                   fontsize=14)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -402,55 +460,58 @@ if __name__ == "__main__":
     print("Optimized for NVIDIA A100 on Tamarind Platform")
     print(f"{'='*60}\n")
     
-    # 0. Create all necessary directories
-    print("--> Setting up directories")
+    # 0. Print GPU environment info
+    print_gpu_info()
+    
+    # 1. Create all necessary directories
+    print("\n--> Setting up directories")
     for directory in [OUTPUT_DIR, PREP_DIR, PARAMS_DIR]: 
         os.makedirs(directory, exist_ok=True)
         print(f"    Created: {directory}")
     
-    # 1. Validate inputs
+    # 2. Validate inputs
     print("\n--> Validating inputs")
-    if not os.path. exists(PDB_FILE_INPUT):
+    if not os.path.exists(PDB_FILE_INPUT):
         print(f"FATAL ERROR: Missing PDB file at {PDB_FILE_INPUT}")
         sys.exit(1)
     print(f"    Found PDB:  {PDB_FILE_INPUT}")
     
     has_ligand = os.path.exists(LIGAND_FILE_INPUT)
     if has_ligand:
-        print(f"    Found Ligand:  {LIGAND_FILE_INPUT}")
+        print(f"    Found Ligand: {LIGAND_FILE_INPUT}")
     else:
         print(f"    No ligand file detected (protein-only simulation)")
     
-    # 2. Get KCX parameters
+    # 3. Get KCX parameters
     print("\n--> Loading KCX parameters")
     kcx_frcmod, kcx_lib = get_kcx_parameters()
     
-    # 3. Prepare ligand (if present)
+    # 4. Prepare ligand (if present)
     lig_mol2, lig_frcmod = None, None
     if has_ligand:
         print("\n--> Preparing ligand")
         lig_mol2, lig_frcmod = prepare_ligand(LIGAND_FILE_INPUT, ligand_charge, PREP_DIR)
     
-    # 4. Prepare protein
+    # 5. Prepare protein
     print("\n--> Preparing protein")
     fixed_protein = prepare_protein(PDB_FILE_INPUT, PREP_DIR)
     
-    # 5. Build system topology
+    # 6. Build system topology
     print("\n--> Building system topology")
     prmtop, inpcrd = build_system(
         fixed_protein, lig_mol2, lig_frcmod, 
         kcx_frcmod, kcx_lib, OUTPUT_DIR
     )
     
-    # 6. Run simulation
+    # 7. Run simulation
     print("\n--> Running OpenMM simulation")
     traj_path, final_pdb = run_simulation(prmtop, inpcrd)
     
-    # 7.  Analyze trajectory
+    # 8.  Analyze trajectory
     print("\n--> Analyzing trajectory")
     run_analysis(traj_path, final_pdb)
     
-    # 8. Summary
+    # 9. Summary
     print(f"\n{'='*60}")
     print("SIMULATION COMPLETE")
     print(f"{'='*60}")
@@ -460,6 +521,7 @@ if __name__ == "__main__":
     print(f"  - Trajectory: trajectory.dcd")
     print(f"  - Final structure: final_structure.pdb")
     print(f"  - Simulation log: simulation.log")
+    print(f"  - Checkpoints: checkpoint.chk, final_checkpoint.chk")
     print(f"  - RMSD plot: rmsd_analysis.png")
     print(f"  - RMSD data:  rmsd_data.txt")
     print(f"{'='*60}\n")
