@@ -1,5 +1,5 @@
 # --- Stage 1: Build Environment ---
-FROM mambaorg/micromamba: 1.5-jammy AS builder
+FROM mambaorg/micromamba:1.5-jammy AS builder
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,7 +36,7 @@ RUN micromamba install -y -n base -c conda-forge \
 
 
 # --- Stage 2: Runtime Image ---
-FROM nvidia/cuda: 11.8.0-runtime-ubuntu22.04
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
