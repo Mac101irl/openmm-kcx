@@ -1,5 +1,5 @@
 # --- Stage 1: Build Environment ---
-FROM mambaorg/micromamba:1.5-jammy AS builder
+FROM mambaorg/micromamba: 1.5-jammy AS builder
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,11 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 USER $MAMBA_USER
 
 # Combine all micromamba installs into a single layer
+# FIXED: Added matplotlib for analysis
 RUN micromamba install -y -n base -c conda-forge \
     python=3.10 \
     numpy \
     scipy \
     pandas \
+    matplotlib \
     openmm \
     cudatoolkit=11.8 \
     parmed \
@@ -55,12 +57,15 @@ RUN mkdir -p /usr/share/man/man1 /usr/share/man/man7 \
 COPY --from=builder /opt/conda /opt/conda
 
 # === GPU & MPS OPTIMIZATIONS FOR CLOUD DEPLOYMENT ===
+# FIXED: Removed space in LD_LIBRARY_PATH variable
 ENV PATH="/opt/conda/bin:$PATH" \
     AMBERHOME="/opt/conda" \
-    LD_LIBRARY_PATH="/opt/conda/lib: $LD_LIBRARY_PATH" \
+    LD_LIBRARY_PATH="/opt/conda/lib:$LD_LIBRARY_PATH" \
     PYTHONUNBUFFERED=1 \
     # Force OpenMM to use CUDA platform
     OPENMM_DEFAULT_PLATFORM="CUDA" \
+    # Mixed precision for A100 optimization
+    CUDA_PRECISION="mixed" \
     # CUDA performance tuning
     CUDA_CACHE_DISABLE=0 \
     CUDA_CACHE_MAXSIZE=2147483648 \
@@ -76,10 +81,17 @@ ENV PATH="/opt/conda/bin:$PATH" \
 
 WORKDIR /app
 
+# Create directories for parameters and inputs
+RUN mkdir -p /app/kcx_params /app/inputs /app/out
+
 # Copy parameter files
-COPY kcx.lib kcx.frcmod /app/kcx_params/
+COPY kcx. lib kcx. frcmod /app/kcx_params/
 
 # Copy main script
 COPY run_openmm_kcx_v5.py /app/run_openmm_kcx_v5.py
 
+# Make script executable
+RUN chmod +x /app/run_openmm_kcx_v5.py
+
+# Set entrypoint for Tamarind platform
 ENTRYPOINT ["python", "/app/run_openmm_kcx_v5.py"]
