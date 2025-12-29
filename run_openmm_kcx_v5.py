@@ -8,19 +8,13 @@ Features:
 - Tamarind pathing (inputs/ and out/)
 - NVIDIA A100 Acceleration (Mixed Precision + JIT Kernels)
 - Automated Trajectory Analysis (RMSD/RMSF)
-
-Updates in this version:
-- Enhanced error handling for AmberTools
-- Proper matplotlib backend for headless operation
-- Pre-bundled KCX parameters from Docker image
-- Robust directory creation
-- GPU optimization aligned with Dockerfile ENV variables
 """
 
 import os
 import sys
 import subprocess
 import shutil
+import traceback
 
 # Configure matplotlib for headless operation BEFORE any other imports
 import matplotlib
@@ -46,7 +40,7 @@ KCX_PARAMS_DIR = "/app/kcx_params"
 # =============================================================================
 # PARAMETERS FROM ENVIRONMENT VARIABLES
 # =============================================================================
-# Job name:  Available as os.getenv('JobName')
+# Job name: Available as os.getenv('JobName')
 job_name = os.getenv('JobName', 'openmm_simulation')
 ligand_charge = int(os.getenv('ligandCharge', '0'))
 force_field = os.getenv('forceField', 'ff19SB')
@@ -74,13 +68,18 @@ default_platform = os.getenv('OPENMM_DEFAULT_PLATFORM', 'CUDA')
 def run_command(cmd, description):
     """Run subprocess command with error handling"""
     print(f"--> Running: {description}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
+    # Use unbuffered output to ensure logs appear in Tamarind immediately
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    stdout, stderr = process.communicate()
+    
+    if process.returncode != 0:
         print(f"ERROR in {description}:")
-        print(f"STDOUT: {result.stdout}")
-        print(f"STDERR: {result.stderr}")
+        print(f"STDOUT: {stdout}")
+        print(f"STDERR: {stderr}")
         sys.exit(1)
-    return result
+    return process
 
 def print_gpu_info():
     """Print GPU information for debugging"""
@@ -105,6 +104,7 @@ def get_kcx_parameters():
     
     if not os.path.exists(frcmod_path):
         print(f"ERROR: KCX frcmod not found at {frcmod_path}")
+        # Only exit if strict requirement, otherwise might proceed if standard
         sys.exit(1)
     if not os.path.exists(lib_path):
         print(f"ERROR: KCX lib not found at {lib_path}")
@@ -447,7 +447,6 @@ def run_analysis(dcd_path, pdb_path):
         
     except Exception as e: 
         print(f"--> Analysis failed: {e}")
-        import traceback
         traceback.print_exc()
 
 # =============================================================================
@@ -455,77 +454,85 @@ def run_analysis(dcd_path, pdb_path):
 # =============================================================================
 
 if __name__ == "__main__":
-    print(f"\n{'='*60}")
-    print("OpenMM MD Simulation with KCX Support")
-    print("Optimized for NVIDIA A100 on Tamarind Platform")
-    print(f"Job Name: {job_name}")
-    print(f"{'='*60}\n")
-    
-    # 0. Print GPU environment info
-    print_gpu_info()
-    
-    # 1. Create all necessary directories - save to out/
-    print("\n--> Setting up directories")
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(PREP_DIR, exist_ok=True)
-    os.makedirs(PARAMS_DIR, exist_ok=True)
-    for directory in [OUTPUT_DIR, PREP_DIR, PARAMS_DIR]:
-        print(f"    Created: {directory}")
-    
-    # 2. Validate inputs
-    print("\n--> Validating inputs")
-    if not os.path.exists(PDB_FILE_INPUT):
-        print(f"FATAL ERROR: Missing PDB file at {PDB_FILE_INPUT}")
+    try:
+        print(f"\n{'='*60}")
+        print("OpenMM MD Simulation with KCX Support")
+        print("Optimized for NVIDIA A100 on Tamarind Platform")
+        print(f"Job Name: {job_name}")
+        print(f"{'='*60}\n")
+        
+        # 0. Print GPU environment info
+        print_gpu_info()
+        
+        # 1. Create all necessary directories - save to out/
+        print("\n--> Setting up directories")
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        os.makedirs(PREP_DIR, exist_ok=True)
+        os.makedirs(PARAMS_DIR, exist_ok=True)
+        for directory in [OUTPUT_DIR, PREP_DIR, PARAMS_DIR]:
+            print(f"    Created: {directory}")
+        
+        # 2. Validate inputs
+        print("\n--> Validating inputs")
+        if not os.path.exists(PDB_FILE_INPUT):
+            print(f"FATAL ERROR: Missing PDB file at {PDB_FILE_INPUT}")
+            # Tamarind check: Ensure input name matches variable name (pdbFile)
+            print(f"Checking current directory inputs/: {os.listdir('inputs') if os.path.exists('inputs') else 'inputs/ missing'}")
+            sys.exit(1)
+        print(f"    Found PDB:  {PDB_FILE_INPUT}")
+        
+        has_ligand = os.path.exists(LIGAND_FILE_INPUT)
+        if has_ligand: 
+            print(f"    Found Ligand: {LIGAND_FILE_INPUT}")
+        else:
+            print(f"    No ligand file detected (protein-only simulation)")
+        
+        # 3. Get KCX parameters
+        print("\n--> Loading KCX parameters")
+        kcx_frcmod, kcx_lib = get_kcx_parameters()
+        
+        # 4. Prepare ligand (if present)
+        lig_mol2, lig_frcmod = None, None
+        if has_ligand: 
+            print("\n--> Preparing ligand")
+            lig_mol2, lig_frcmod = prepare_ligand(LIGAND_FILE_INPUT, ligand_charge, PREP_DIR)
+        
+        # 5. Prepare protein
+        print("\n--> Preparing protein")
+        fixed_protein = prepare_protein(PDB_FILE_INPUT, PREP_DIR)
+        
+        # 6. Build system topology
+        print("\n--> Building system topology")
+        prmtop, inpcrd = build_system(
+            fixed_protein, lig_mol2, lig_frcmod, 
+            kcx_frcmod, kcx_lib, OUTPUT_DIR
+        )
+        
+        # 7. Run simulation
+        print("\n--> Running OpenMM simulation")
+        traj_path, final_pdb = run_simulation(prmtop, inpcrd)
+        
+        # 8. Analyze trajectory
+        print("\n--> Analyzing trajectory")
+        run_analysis(traj_path, final_pdb)
+        
+        # 9. Summary
+        print(f"\n{'='*60}")
+        print("SIMULATION COMPLETE")
+        print(f"{'='*60}")
+        print(f"Job:  {job_name}")
+        print(f"All results saved to: {OUTPUT_DIR}/")
+        print(f"\nKey output files:")
+        print(f"  - Topology: {OUTPUT_DIR}/system.prmtop")
+        print(f"  - Trajectory: {OUTPUT_DIR}/trajectory.dcd")
+        print(f"  - Final structure: {OUTPUT_DIR}/final_structure.pdb")
+        print(f"  - Simulation log: {OUTPUT_DIR}/simulation.log")
+        print(f"  - Checkpoints: {OUTPUT_DIR}/checkpoint.chk, {OUTPUT_DIR}/final_checkpoint.chk")
+        print(f"  - RMSD plot: {OUTPUT_DIR}/rmsd_analysis.png")
+        print(f"  - RMSD data: {OUTPUT_DIR}/rmsd_data.txt")
+        print(f"{'='*60}\n")
+        
+    except Exception as e:
+        print(f"\nCRITICAL FAILURE: {e}")
+        traceback.print_exc()
         sys.exit(1)
-    print(f"    Found PDB:  {PDB_FILE_INPUT}")
-    
-    has_ligand = os.path.exists(LIGAND_FILE_INPUT)
-    if has_ligand: 
-        print(f"    Found Ligand: {LIGAND_FILE_INPUT}")
-    else:
-        print(f"    No ligand file detected (protein-only simulation)")
-    
-    # 3. Get KCX parameters
-    print("\n--> Loading KCX parameters")
-    kcx_frcmod, kcx_lib = get_kcx_parameters()
-    
-    # 4. Prepare ligand (if present)
-    lig_mol2, lig_frcmod = None, None
-    if has_ligand: 
-        print("\n--> Preparing ligand")
-        lig_mol2, lig_frcmod = prepare_ligand(LIGAND_FILE_INPUT, ligand_charge, PREP_DIR)
-    
-    # 5. Prepare protein
-    print("\n--> Preparing protein")
-    fixed_protein = prepare_protein(PDB_FILE_INPUT, PREP_DIR)
-    
-    # 6. Build system topology
-    print("\n--> Building system topology")
-    prmtop, inpcrd = build_system(
-        fixed_protein, lig_mol2, lig_frcmod, 
-        kcx_frcmod, kcx_lib, OUTPUT_DIR
-    )
-    
-    # 7. Run simulation
-    print("\n--> Running OpenMM simulation")
-    traj_path, final_pdb = run_simulation(prmtop, inpcrd)
-    
-    # 8. Analyze trajectory
-    print("\n--> Analyzing trajectory")
-    run_analysis(traj_path, final_pdb)
-    
-    # 9. Summary
-    print(f"\n{'='*60}")
-    print("SIMULATION COMPLETE")
-    print(f"{'='*60}")
-    print(f"Job:  {job_name}")
-    print(f"All results saved to: {OUTPUT_DIR}/")
-    print(f"\nKey output files:")
-    print(f"  - Topology: {OUTPUT_DIR}/system.prmtop")
-    print(f"  - Trajectory: {OUTPUT_DIR}/trajectory.dcd")
-    print(f"  - Final structure: {OUTPUT_DIR}/final_structure.pdb")
-    print(f"  - Simulation log: {OUTPUT_DIR}/simulation.log")
-    print(f"  - Checkpoints: {OUTPUT_DIR}/checkpoint.chk, {OUTPUT_DIR}/final_checkpoint.chk")
-    print(f"  - RMSD plot: {OUTPUT_DIR}/rmsd_analysis.png")
-    print(f"  - RMSD data: {OUTPUT_DIR}/rmsd_data.txt")
-    print(f"{'='*60}\n")
