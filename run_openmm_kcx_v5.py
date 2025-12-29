@@ -37,7 +37,7 @@ LIGAND_FILE_INPUT = "inputs/ligandFile.sdf"
 OUTPUT_DIR = "out"
 
 # Define subdirectories for organization
-PREP_DIR = os.path. join(OUTPUT_DIR, "prep")
+PREP_DIR = os.path.join(OUTPUT_DIR, "prep")
 PARAMS_DIR = os.path.join(OUTPUT_DIR, "params")
 
 # KCX parameters bundled in Docker image
@@ -47,7 +47,7 @@ KCX_PARAMS_DIR = "/app/kcx_params"
 # PARAMETERS FROM ENVIRONMENT VARIABLES
 # =============================================================================
 # Job name:  Available as os.getenv('JobName')
-job_name = os. getenv('JobName', 'openmm_simulation')
+job_name = os.getenv('JobName', 'openmm_simulation')
 ligand_charge = int(os.getenv('ligandCharge', '0'))
 force_field = os.getenv('forceField', 'ff19SB')
 water_model = os.getenv('waterModel', 'tip3p')
@@ -55,16 +55,16 @@ box_size = float(os.getenv('boxSize', '12.0'))
 ionic_strength = float(os.getenv('ionicStrength', '0.15'))
 minimization_steps = int(os.getenv('minimizationSteps', '10000'))
 equilibration_time = float(os.getenv('equilibrationTime', '0.2'))
-production_time = float(os. getenv('productionTime', '1.0'))
+production_time = float(os.getenv('productionTime', '1.0'))
 timestep = float(os.getenv('timestep', '2.0'))
-temperature = float(os. getenv('temperature', '310.0'))
-pressure = float(os. getenv('pressure', '1.0'))
+temperature = float(os.getenv('temperature', '310.0'))
+pressure = float(os.getenv('pressure', '1.0'))
 constraints = os.getenv('constraints', 'HBonds')
 prod_traj_freq = int(os.getenv('prodTrajFreq', '5000'))
 step_size = int(os.getenv('stepSize', '5'))
 
 # GPU Configuration from environment (set in Dockerfile)
-cuda_precision = os. getenv('CUDA_PRECISION', 'mixed')
+cuda_precision = os.getenv('CUDA_PRECISION', 'mixed')
 default_platform = os.getenv('OPENMM_DEFAULT_PLATFORM', 'CUDA')
 
 # =============================================================================
@@ -101,12 +101,12 @@ def print_gpu_info():
 def get_kcx_parameters():
     """Use pre-bundled KCX parameters from Docker image"""
     frcmod_path = os.path.join(KCX_PARAMS_DIR, 'kcx.frcmod')
-    lib_path = os. path.join(KCX_PARAMS_DIR, 'kcx.lib')
+    lib_path = os.path.join(KCX_PARAMS_DIR, 'kcx.lib')
     
     if not os.path.exists(frcmod_path):
         print(f"ERROR: KCX frcmod not found at {frcmod_path}")
         sys.exit(1)
-    if not os.path. exists(lib_path):
+    if not os.path.exists(lib_path):
         print(f"ERROR: KCX lib not found at {lib_path}")
         sys.exit(1)
     
@@ -117,8 +117,8 @@ def prepare_ligand(lig_file, lig_charge, output_dir):
     """Prepare ligand with Antechamber and GAFF2"""
     print(f"--> Preparing Ligand: {lig_file}")
     os.makedirs(output_dir, exist_ok=True)
-    mol2_out = os.path. join(output_dir, 'ligand.mol2')
-    frcmod_out = os.path. join(output_dir, 'ligand.frcmod')
+    mol2_out = os.path.join(output_dir, 'ligand.mol2')
+    frcmod_out = os.path.join(output_dir, 'ligand.frcmod')
     
     # Run antechamber
     cmd = [
@@ -140,7 +140,7 @@ def prepare_protein(pdb_path, output_dir):
     """Prepare protein structure with pdb4amber"""
     print(f"--> Preparing Protein: {pdb_path}")
     os.makedirs(output_dir, exist_ok=True)
-    protein_out = os. path.join(output_dir, 'protein_fixed.pdb')
+    protein_out = os.path.join(output_dir, 'protein_fixed.pdb')
     
     cmd = ['pdb4amber', '-i', pdb_path, '-o', protein_out, '--dry']
     run_command(cmd, "PDB4AMBER")
@@ -157,9 +157,9 @@ def build_system(protein_pdb, lig_mol2, lig_frcmod, kcx_frcmod, kcx_lib, output_
     print("--> Building System with TLeap")
     os.makedirs(output_dir, exist_ok=True)
     
-    tleap_in = os.path. join(output_dir, 'tleap. in')
+    tleap_in = os.path.join(output_dir, 'tleap.in')
     prmtop = os.path.join(output_dir, 'system.prmtop')
-    inpcrd = os. path.join(output_dir, 'system.inpcrd')
+    inpcrd = os.path.join(output_dir, 'system.inpcrd')
     
     # Build TLeap script
     script = f"""source leaprc.protein.{force_field}
@@ -234,19 +234,19 @@ def run_simulation(prmtop_path, inpcrd_path):
     # Print available platforms
     print("--> Available OpenMM Platforms:")
     for i in range(mm.Platform.getNumPlatforms()):
-        platform = mm.Platform. getPlatform(i)
+        platform = mm.Platform.getPlatform(i)
         print(f"    {i}: {platform.getName()}")
 
     # Load topology and coordinates
     print("--> Loading topology and coordinates")
-    prmtop = app. AmberPrmtopFile(prmtop_path)
+    prmtop = app.AmberPrmtopFile(prmtop_path)
     inpcrd = app.AmberInpcrdFile(inpcrd_path)
 
     # 1. System Creation with optimized settings
     print("--> Creating system")
     system = prmtop.createSystem(
         nonbondedMethod=app.PME,
-        nonbondedCutoff=1.0*unit. nanometer,
+        nonbondedCutoff=1.0*unit.nanometer,
         constraints=app.HBonds if constraints == 'HBonds' else None,
         rigidWater=True,
         hydrogenMass=None
@@ -255,14 +255,14 @@ def run_simulation(prmtop_path, inpcrd_path):
     # Add barostat for NPT ensemble
     system.addForce(mm.MonteCarloBarostat(
         pressure*unit.bar, 
-        temperature*unit. kelvin, 
+        temperature*unit.kelvin, 
         25
     ))
 
     # 2. Integrator (LangevinMiddle is best for modern GPUs)
     print("--> Setting up integrator")
     integrator = mm.LangevinMiddleIntegrator(
-        temperature*unit. kelvin, 
+        temperature*unit.kelvin, 
         1.0/unit.picosecond, 
         timestep*unit.femtosecond
     )
@@ -294,29 +294,29 @@ def run_simulation(prmtop_path, inpcrd_path):
 
     # 4. Create simulation context
     if properties:
-        sim = app.Simulation(prmtop. topology, system, integrator, platform, properties)
+        sim = app.Simulation(prmtop.topology, system, integrator, platform, properties)
     else:
-        sim = app.Simulation(prmtop. topology, system, integrator, platform)
+        sim = app.Simulation(prmtop.topology, system, integrator, platform)
     
     sim.context.setPositions(inpcrd.positions)
     if inpcrd.boxVectors:
-        sim.context.setPeriodicBoxVectors(*inpcrd. boxVectors)
+        sim.context.setPeriodicBoxVectors(*inpcrd.boxVectors)
 
     # Diagnostic information
     print(f"--> [PLATFORM] {platform.getName()}")
     if platform.getName() == 'CUDA': 
         print(f"    Device: {platform.getPropertyValue(sim.context, 'DeviceName')}")
-        print(f"    Device Index: {platform.getPropertyValue(sim. context, 'DeviceIndex')}")
+        print(f"    Device Index: {platform.getPropertyValue(sim.context, 'DeviceIndex')}")
         print(f"    Precision: {platform.getPropertyValue(sim.context, 'Precision')}")
-        print(f"    CUDA Compiler: {platform.getPropertyValue(sim. context, 'CudaCompiler')}")
+        print(f"    CUDA Compiler: {platform.getPropertyValue(sim.context, 'CudaCompiler')}")
 
     # 5. Energy Minimization
     print("--> Minimizing energy...")
     print(f"    Target:  {minimization_steps} steps")
     sim.minimizeEnergy(maxIterations=minimization_steps)
     
-    state = sim.context. getState(getEnergy=True)
-    pot_energy = state. getPotentialEnergy()
+    state = sim.context.getState(getEnergy=True)
+    pot_energy = state.getPotentialEnergy()
     print(f"--> Minimization complete.  Potential Energy: {pot_energy}")
 
     # 6. Equilibration (NVT then NPT)
@@ -335,11 +335,11 @@ def run_simulation(prmtop_path, inpcrd_path):
     print(f"    Output frequency: {prod_traj_freq} steps")
     
     # Setup reporters - save to out/ directory
-    dcd_file = os. path.join(OUTPUT_DIR, 'trajectory.dcd')
-    log_file = os. path.join(OUTPUT_DIR, 'simulation.log')
-    checkpoint_file = os. path.join(OUTPUT_DIR, 'checkpoint. chk')
+    dcd_file = os.path.join(OUTPUT_DIR, 'trajectory.dcd')
+    log_file = os.path.join(OUTPUT_DIR, 'simulation.log')
+    checkpoint_file = os.path.join(OUTPUT_DIR, 'checkpoint.chk')
     
-    sim.reporters. append(app.DCDReporter(dcd_file, prod_traj_freq))
+    sim.reporters.append(app.DCDReporter(dcd_file, prod_traj_freq))
     sim.reporters.append(app.StateDataReporter(
         log_file, 
         prod_traj_freq,
@@ -355,7 +355,7 @@ def run_simulation(prmtop_path, inpcrd_path):
     ))
     
     # Checkpoint reporter for restart capability
-    sim.reporters.append(app. CheckpointReporter(checkpoint_file, prod_traj_freq * 10))
+    sim.reporters.append(app.CheckpointReporter(checkpoint_file, prod_traj_freq * 10))
     
     # Also print to stdout
     sim.reporters.append(app.StateDataReporter(
@@ -376,10 +376,10 @@ def run_simulation(prmtop_path, inpcrd_path):
     final_pdb = os.path.join(OUTPUT_DIR, 'final_structure.pdb')
     state = sim.context.getState(getPositions=True, getVelocities=True, getEnergy=True)
     with open(final_pdb, 'w') as f:
-        app.PDBFile. writeFile(sim.topology, state.getPositions(), f)
+        app.PDBFile.writeFile(sim.topology, state.getPositions(), f)
     
     # Save final checkpoint
-    sim.saveCheckpoint(os.path.join(OUTPUT_DIR, 'final_checkpoint. chk'))
+    sim.saveCheckpoint(os.path.join(OUTPUT_DIR, 'final_checkpoint.chk'))
     
     print(f"\n{'='*60}")
     print("--> Simulation Finished Successfully")
@@ -407,7 +407,7 @@ def run_analysis(dcd_path, pdb_path):
         # Load trajectory
         print(f"    Loading trajectory: {dcd_path}")
         traj = md.load(dcd_path, top=pdb_path)
-        print(f"    Trajectory loaded: {traj. n_frames} frames, {traj.n_atoms} atoms")
+        print(f"    Trajectory loaded: {traj.n_frames} frames, {traj.n_atoms} atoms")
         
         # Calculate RMSD for backbone atoms
         print("    Calculating backbone RMSD...")
@@ -420,7 +420,7 @@ def run_analysis(dcd_path, pdb_path):
         
         # Generate RMSD plot
         plt.figure(figsize=(10, 6))
-        plt.plot(time_ns, rmsd_angstrom, linewidth=1. 5, color='#2E86AB')
+        plt.plot(time_ns, rmsd_angstrom, linewidth=1.5, color='#2E86AB')
         plt.xlabel('Time (ns)', fontsize=12)
         plt.ylabel('Backbone RMSD (Å)', fontsize=12)
         plt.title(f'Backbone RMSD vs Time\nMean: {rmsd_angstrom.mean():.2f} Å, Max: {rmsd_angstrom.max():.2f} Å', 
@@ -429,13 +429,13 @@ def run_analysis(dcd_path, pdb_path):
         plt.tight_layout()
         
         # Save to out/ directory
-        rmsd_plot = os.path. join(OUTPUT_DIR, 'rmsd_analysis.png')
+        rmsd_plot = os.path.join(OUTPUT_DIR, 'rmsd_analysis.png')
         plt.savefig(rmsd_plot, dpi=150, bbox_inches='tight')
         plt.close()
         
         print(f"--> RMSD Analysis Complete:")
         print(f"    Mean RMSD: {rmsd_angstrom.mean():.2f} Å")
-        print(f"    Max RMSD: {rmsd_angstrom. max():.2f} Å")
+        print(f"    Max RMSD: {rmsd_angstrom.max():.2f} Å")
         print(f"    Min RMSD: {rmsd_angstrom.min():.2f} Å")
         print(f"    Plot saved:  {rmsd_plot}")
         
@@ -474,7 +474,7 @@ if __name__ == "__main__":
     
     # 2. Validate inputs
     print("\n--> Validating inputs")
-    if not os.path. exists(PDB_FILE_INPUT):
+    if not os.path.exists(PDB_FILE_INPUT):
         print(f"FATAL ERROR: Missing PDB file at {PDB_FILE_INPUT}")
         sys.exit(1)
     print(f"    Found PDB:  {PDB_FILE_INPUT}")
@@ -522,7 +522,7 @@ if __name__ == "__main__":
     print(f"All results saved to: {OUTPUT_DIR}/")
     print(f"\nKey output files:")
     print(f"  - Topology: {OUTPUT_DIR}/system.prmtop")
-    print(f"  - Trajectory: {OUTPUT_DIR}/trajectory. dcd")
+    print(f"  - Trajectory: {OUTPUT_DIR}/trajectory.dcd")
     print(f"  - Final structure: {OUTPUT_DIR}/final_structure.pdb")
     print(f"  - Simulation log: {OUTPUT_DIR}/simulation.log")
     print(f"  - Checkpoints: {OUTPUT_DIR}/checkpoint.chk, {OUTPUT_DIR}/final_checkpoint.chk")
