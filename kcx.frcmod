@@ -7,27 +7,28 @@ CY 12.01         0.360             sp2 carboxyl carbon of carbamate
 
 BOND
 CY-O2   648.0    1.250       carboxylate C-O (same as COO-)
-CY-N3   367.0    1.380       carbamate C-N bond
-N3-H    434.0    1.010       N-H in carbamate
+CY-N    367.0    1.380       carbamate C-N bond (using N for sp2 nitrogen)
+N-H     434.0    1.010       N-H in carbamate
+C3-N    337.0    1.475       CE-NZ bond in carbamate lysine
 
 ANGLE
 O2-CY-O2    80.0      126.0      carboxylate O-C-O
-O2-CY-N3    70.0      117.0      carbamate O-C-N
-CY-N3-C3    80.0      122.0      carbamate C-N-CE angle
-CY-N3-H     50.0      118.0      carbamate C-N-H angle
-C3-N3-H     50.0      118.0      CE-N-H angle
-H-N3-H      35.0      120.0      H-N-H (if present)
+O2-CY-N     70.0      117.0      carbamate O-C-N
+CY-N-C3     80.0      122.0      carbamate C-N-CE angle
+CY-N-H      50.0      118.0      carbamate C-N-H angle
+C3-N-H      50.0      118.0      CE-N-H angle
+H-N-H       35.0      120.0      H-N-H (if present)
 
 DIHE
-O2-CY-N3-C3    2    2.5     180.0     2.      carbamate rotation barrier
-O2-CY-N3-H     2    2.5     180.0     2.      
-C3-C3-N3-CY    1    0.0       0.0     3.      CD-CE-NZ-CY torsion
-C3-C3-N3-H     1    0.0       0.0     3.      
-X -CY-N3-X     2    2.5     180.0     2.      generic carbamate
+O2-CY-N-C3    2    2.5     180.0     2.      carbamate rotation barrier
+O2-CY-N-H     2    2.5     180.0     2.      
+C3-C3-N-CY    1    0.0       0.0     3.      CD-CE-NZ-CY torsion
+C3-C3-N-H     1    0.0       0.0     3.      
+X -CY-N-X     2    2.5     180.0     2.      generic carbamate
 
 IMPROPER
-CY-N3-O2-O2   10.5    180.0     2.      carboxylate planarity
-N3-C3-CY-H     1.0    180.0     2.      nitrogen planarity
+CY-N-O2-O2   10.5    180.0     2.      carboxylate planarity
+N-C3-CY-H     1.0    180.0     2.      nitrogen planarity
 
 NONBON
   CY          1.9080  0.0860             same as sp2 C
