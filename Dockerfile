@@ -55,9 +55,9 @@ RUN mkdir -p /usr/share/man/man1 /usr/share/man/man7 \
 
 COPY --from=builder /opt/conda /opt/conda
 
-ENV PATH="/opt/conda/bin: $PATH" \
+ENV PATH="/opt/conda/bin:$PATH" \
     AMBERHOME="/opt/conda" \
-    LD_LIBRARY_PATH="/opt/conda/lib: $LD_LIBRARY_PATH" \
+    LD_LIBRARY_PATH="/opt/conda/lib:$LD_LIBRARY_PATH" \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
