@@ -37,7 +37,7 @@ LIGAND_FILE_INPUT = "/inputs/ligandFile"
 OUTPUT_DIR = "/outputs"
 
 # Define subdirectories for organization
-PREP_DIR = os.path.join(OUTPUT_DIR, "prep")
+PREP_DIR = os. path.join(OUTPUT_DIR, "prep")
 PARAMS_DIR = os.path.join(OUTPUT_DIR, "params")
 
 # KCX parameters bundled in Docker image
@@ -47,12 +47,12 @@ KCX_PARAMS_DIR = "/app/kcx_params"
 # PARAMETERS FROM ENVIRONMENT VARIABLES
 # =============================================================================
 job_name = os.getenv('JobName', 'openmm_simulation')
-ligand_charge = int(os.getenv('ligandCharge', '0'))
+ligand_charge = int(os. getenv('ligandCharge', '0'))
 force_field = os.getenv('forceField', 'ff19SB')
 water_model = os.getenv('waterModel', 'tip3p')
 box_size = float(os.getenv('boxSize', '12.0'))
 ionic_strength = float(os.getenv('ionicStrength', '0.15'))
-minimization_steps = int(os.getenv('minimizationSteps', '10000'))
+minimization_steps = int(os. getenv('minimizationSteps', '10000'))
 equilibration_time = float(os.getenv('equilibrationTime', '0.2'))
 production_time = float(os.getenv('productionTime', '1.0'))
 timestep = float(os.getenv('timestep', '2.0'))
@@ -77,7 +77,7 @@ def run_command(cmd, description):
     if result.returncode != 0:
         print(f"ERROR in {description}:")
         print(f"STDOUT: {result.stdout}")
-        print(f"STDERR:  {result.stderr}")
+        print(f"STDERR: {result.stderr}")
         sys.exit(1)
     return result
 
@@ -100,7 +100,7 @@ def print_gpu_info():
 def get_kcx_parameters():
     """Use pre-bundled KCX parameters from Docker image"""
     frcmod_path = os.path.join(KCX_PARAMS_DIR, 'kcx.frcmod')
-    lib_path = os.path.join(KCX_PARAMS_DIR, 'kcx. lib')
+    lib_path = os.path.join(KCX_PARAMS_DIR, 'kcx.lib')
     
     if not os.path.exists(frcmod_path):
         print(f"ERROR: KCX frcmod not found at {frcmod_path}")
@@ -114,9 +114,9 @@ def get_kcx_parameters():
 
 def prepare_ligand(lig_file, lig_charge, output_dir):
     """Prepare ligand with Antechamber and GAFF2"""
-    print(f"--> Preparing Ligand: {lig_file}")
+    print(f"--> Preparing Ligand:  {lig_file}")
     os.makedirs(output_dir, exist_ok=True)
-    mol2_out = os.path.join(output_dir, 'ligand.mol2')
+    mol2_out = os.path. join(output_dir, 'ligand.mol2')
     frcmod_out = os.path.join(output_dir, 'ligand.frcmod')
     
     # Run antechamber
@@ -132,7 +132,7 @@ def prepare_ligand(lig_file, lig_charge, output_dir):
     cmd = ['parmchk2', '-i', mol2_out, '-f', 'mol2', '-o', frcmod_out]
     run_command(cmd, "Parmchk2")
     
-    print(f"--> Ligand prepared:  {mol2_out}")
+    print(f"--> Ligand prepared: {mol2_out}")
     return mol2_out, frcmod_out
 
 def prepare_protein(pdb_path, output_dir):
@@ -233,8 +233,8 @@ def run_simulation(prmtop_path, inpcrd_path):
     # Print available platforms
     print("--> Available OpenMM Platforms:")
     for i in range(mm.Platform.getNumPlatforms()):
-        platform = mm.Platform. getPlatform(i)
-        print(f"    {i}: {platform.getName()}")
+        platform = mm.Platform.getPlatform(i)
+        print(f"    {i}: {platform. getName()}")
 
     # Load topology and coordinates
     print("--> Loading topology and coordinates")
@@ -249,7 +249,7 @@ def run_simulation(prmtop_path, inpcrd_path):
         constraints=app.HBonds if constraints == 'HBonds' else None,
         rigidWater=True,
         # Use HMR (Hydrogen Mass Repartitioning) for larger timesteps if needed
-        hydrogenMass=None  # Set to 4*unit.amu for 4fs timesteps
+        hydrogenMass=None  # Set to 4*unit. amu for 4fs timesteps
     )
     
     # Add barostat for NPT ensemble
@@ -286,29 +286,29 @@ def run_simulation(prmtop_path, inpcrd_path):
             print(f"--> [SUCCESS] Using {platform_name} Platform")
             break
         except Exception as e:
-            print(f"--> [INFO] {platform_name} not available:  {e}")
+            print(f"--> [INFO] {platform_name} not available: {e}")
             continue
     
-    if platform is None: 
+    if platform is None:
         print("--> [ERROR] No suitable platform found!")
         sys.exit(1)
 
     # 4. Create simulation context
     if properties:
-        sim = app.Simulation(prmtop.topology, system, integrator, platform, properties)
+        sim = app.Simulation(prmtop. topology, system, integrator, platform, properties)
     else:
         sim = app.Simulation(prmtop.topology, system, integrator, platform)
     
     sim.context.setPositions(inpcrd.positions)
     if inpcrd.boxVectors:
-        sim.context.setPeriodicBoxVectors(*inpcrd.boxVectors)
+        sim.context. setPeriodicBoxVectors(*inpcrd.boxVectors)
 
     # Diagnostic information
     print(f"--> [PLATFORM] {platform.getName()}")
     if platform.getName() == 'CUDA':
         print(f"    Device: {platform.getPropertyValue(sim.context, 'DeviceName')}")
         print(f"    Device Index: {platform.getPropertyValue(sim.context, 'DeviceIndex')}")
-        print(f"    Precision: {platform.getPropertyValue(sim.context, 'Precision')}")
+        print(f"    Precision:  {platform.getPropertyValue(sim.context, 'Precision')}")
         print(f"    CUDA Compiler: {platform.getPropertyValue(sim.context, 'CudaCompiler')}")
 
     # 5. Energy Minimization
@@ -360,7 +360,7 @@ def run_simulation(prmtop_path, inpcrd_path):
     
     # Also print to stdout
     sim.reporters.append(app.StateDataReporter(
-        sys. stdout,
+        sys.stdout,
         prod_traj_freq * 10,  # Less frequent console output
         step=True,
         time=True,
@@ -408,7 +408,7 @@ def run_analysis(dcd_path, pdb_path):
         # Load trajectory
         print(f"    Loading trajectory: {dcd_path}")
         traj = md.load(dcd_path, top=pdb_path)
-        print(f"    Trajectory loaded:  {traj.n_frames} frames, {traj.n_atoms} atoms")
+        print(f"    Trajectory loaded: {traj.n_frames} frames, {traj.n_atoms} atoms")
         
         # Calculate RMSD for backbone atoms
         print("    Calculating backbone RMSD...")
@@ -424,7 +424,7 @@ def run_analysis(dcd_path, pdb_path):
         plt.plot(time_ns, rmsd_angstrom, linewidth=1. 5, color='#2E86AB')
         plt.xlabel('Time (ns)', fontsize=12)
         plt.ylabel('Backbone RMSD (Å)', fontsize=12)
-        plt.title(f'Backbone RMSD vs Time\nMean: {rmsd_angstrom.mean():.2f} Å, Max: {rmsd_angstrom.max():.2f} Å', 
+        plt.title(f'Backbone RMSD vs Time\nMean: {rmsd_angstrom. mean():.2f} Å, Max: {rmsd_angstrom.max():.2f} Å', 
                   fontsize=14)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -454,7 +454,7 @@ def run_analysis(dcd_path, pdb_path):
 # MAIN EXECUTION
 # =============================================================================
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     print(f"\n{'='*60}")
     print("OpenMM MD Simulation with KCX Support")
     print("Optimized for NVIDIA A100 on Tamarind Platform")
