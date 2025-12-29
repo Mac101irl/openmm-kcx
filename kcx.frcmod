@@ -3,13 +3,13 @@ Derived from lysine parameters with carbamate modifications
 Reference: DOI 10.1002/jcc.21836
 
 MASS
-CY 12.01         0.360             sp2 carboxyl carbon of carbamate
+CY 12. 01         0.360             sp2 carboxyl carbon of carbamate
 
 BOND
 CY-O2   648.0    1.250       carboxylate C-O (same as COO-)
-CY-N    367.0    1.380       carbamate C-N bond (using N for sp2 nitrogen)
+CY-N    367.0    1.380       carbamate C-N bond
 N-H     434.0    1.010       N-H in carbamate
-C3-N    337.0    1.475       CE-NZ bond in carbamate lysine
+C3-N    337.0    1.475       CE-NZ bond
 
 ANGLE
 O2-CY-O2    80.0      126.0      carboxylate O-C-O
@@ -17,13 +17,13 @@ O2-CY-N     70.0      117.0      carbamate O-C-N
 CY-N-C3     80.0      122.0      carbamate C-N-CE angle
 CY-N-H      50.0      118.0      carbamate C-N-H angle
 C3-N-H      50.0      118.0      CE-N-H angle
-H-N-H       35.0      120.0      H-N-H (if present)
+H-N-H       35.0      120.0      H-N-H
 
 DIHE
 O2-CY-N-C3    2    2.5     180.0     2.      carbamate rotation barrier
-O2-CY-N-H     2    2.5     180.0     2.      
+O2-CY-N-H     2    2.5     180.0     2.
 C3-C3-N-CY    1    0.0       0.0     3.      CD-CE-NZ-CY torsion
-C3-C3-N-H     1    0.0       0.0     3.      
+C3-C3-N-H     1    0.0       0.0     3.
 X -CY-N-X     2    2.5     180.0     2.      generic carbamate
 
 IMPROPER
