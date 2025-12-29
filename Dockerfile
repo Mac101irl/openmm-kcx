@@ -24,7 +24,7 @@ RUN micromamba install -y -n base -c conda-forge \
     openmmforcefields \
     && micromamba clean -afy \
     && find /opt/conda -type f -name '*.a' -delete \
-    && find /opt/conda -type f -name '*. pyc' -delete \
+    && find /opt/conda -type f -name '*.pyc' -delete \
     && find /opt/conda -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true \
     && find /opt/conda -type d -name 'tests' -exec rm -rf {} + 2>/dev/null || true \
     && find /opt/conda -type d -name 'test' -exec rm -rf {} + 2>/dev/null || true \
