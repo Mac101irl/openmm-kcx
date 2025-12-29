@@ -45,7 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /opt/conda /opt/conda
 
-ENV PATH="/opt/conda/bin:$PATH
+ENV PATH="/opt/conda/bin:$PATH"
 ENV AMBERHOME="/opt/conda"
 ENV LD_LIBRARY_PATH="/opt/conda/lib:$LD_LIBRARY_PATH"
 ENV PYTHONUNBUFFERED=1
