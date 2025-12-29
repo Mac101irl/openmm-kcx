@@ -30,7 +30,7 @@ matplotlib.use('Agg')
 # TAMARIND PATH CONFIGURATION
 # =============================================================================
 # File inputs: Read from inputs/settingName.ext (use exact setting name)
-PDB_FILE_INPUT = "inputs/pdbFile. pdb"
+PDB_FILE_INPUT = "inputs/pdbFile.pdb"
 LIGAND_FILE_INPUT = "inputs/ligandFile.sdf"
 
 # Outputs: Save ALL results to out/ directory
@@ -49,8 +49,8 @@ KCX_PARAMS_DIR = "/app/kcx_params"
 # Job name:  Available as os.getenv('JobName')
 job_name = os. getenv('JobName', 'openmm_simulation')
 ligand_charge = int(os.getenv('ligandCharge', '0'))
-force_field = os. getenv('forceField', 'ff19SB')
-water_model = os. getenv('waterModel', 'tip3p')
+force_field = os.getenv('forceField', 'ff19SB')
+water_model = os.getenv('waterModel', 'tip3p')
 box_size = float(os.getenv('boxSize', '12.0'))
 ionic_strength = float(os.getenv('ionicStrength', '0.15'))
 minimization_steps = int(os.getenv('minimizationSteps', '10000'))
@@ -77,7 +77,7 @@ def run_command(cmd, description):
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"ERROR in {description}:")
-        print(f"STDOUT: {result. stdout}")
+        print(f"STDOUT: {result.stdout}")
         print(f"STDERR: {result.stderr}")
         sys.exit(1)
     return result
