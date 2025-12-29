@@ -9,8 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER $MAMBA_USER
 
-# Combine all micromamba installs into a single layer to reduce image size
-# and avoid duplicate dependency resolution
+# Combine all micromamba installs into a single layer
 RUN micromamba install -y -n base -c conda-forge \
     python=3.10 \
     numpy \
@@ -55,9 +54,7 @@ RUN mkdir -p /usr/share/man/man1 /usr/share/man/man7 \
 
 COPY --from=builder /opt/conda /opt/conda
 
-# === GPU PERFORMANCE OPTIMIZATIONS ===
-
-# CUDA environment variables for optimal GPU performance
+# === GPU & MPS OPTIMIZATIONS FOR CLOUD DEPLOYMENT ===
 ENV PATH="/opt/conda/bin:$PATH" \
     AMBERHOME="/opt/conda" \
     LD_LIBRARY_PATH="/opt/conda/lib: $LD_LIBRARY_PATH" \
@@ -67,19 +64,14 @@ ENV PATH="/opt/conda/bin:$PATH" \
     # CUDA performance tuning
     CUDA_CACHE_DISABLE=0 \
     CUDA_CACHE_MAXSIZE=2147483648 \
-    # Optimize CUDA kernel caching
-    CUDA_FORCE_PTX_JIT=0 \
-    # Disable CUDA debugging for performance
     CUDA_LAUNCH_BLOCKING=0 \
-    # Enable TensorFloat-32 for supported GPUs (Ampere+)
-    NVIDIA_TF32_OVERRIDE=1 \
-    # Memory management - use default allocator for better performance
-    PYTORCH_CUDA_ALLOC_CONF="" \
-    # GPU device scheduling - yield for better multi-process performance
-    CUDA_DEVICE_ORDER="PCI_BUS_ID"
-
-# Set NVIDIA container runtime environment variables
-ENV NVIDIA_VISIBLE_DEVICES=all \
+    # GPU device ordering
+    CUDA_DEVICE_ORDER="PCI_BUS_ID" \
+    # MPS environment variables (container will use MPS if host has it enabled)
+    CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps \
+    CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log \
+    # NVIDIA container runtime
+    NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 WORKDIR /app
@@ -89,9 +81,5 @@ COPY kcx.lib kcx.frcmod /app/kcx_params/
 
 # Copy main script
 COPY run_openmm_kcx_v5.py /app/run_openmm_kcx_v5.py
-
-# Health check to verify GPU is accessible
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import openmm; print(openmm. Platform.getPlatformByName('CUDA').getName())" || exit 1
 
 ENTRYPOINT ["python", "/app/run_openmm_kcx_v5.py"]
