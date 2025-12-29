@@ -1,6 +1,6 @@
 !! index array str
  "KCX"
-! entry. KCX.unit. atoms table str name str type int typex int resession int flags int seq int elmnt dbl chg
+! entry. KCX.unit. atoms table str name str type int typex int reession int flags int seq int elmnt dbl chg
  "N" "N" 0 1 131072 1 7 -0. 4157
  "H" "H" 0 1 131072 2 1 0.2719
  "CA" "CX" 0 1 131072 3 6 -0.0351
@@ -56,7 +56,7 @@
  0.0
 ! entry.KCX.unit.childsequence single int
  2
-!entry.KCX.unit. connect array int
+! entry.KCX.unit.connect array int
  1
  22
 !entry.KCX.unit. connectivity table int atom1x int atom2x int flags
@@ -82,7 +82,7 @@
  19 20 1
  19 21 1
  22 23 2
-!entry.KCX.unit. hierarchy table str absession int ession str bsession int csession
+!entry.KCX.unit. hierarchy table str abession int ession str bession int cession
  "U" 0 "R" 1
  "R" 1 "A" 1
  "R" 1 "A" 2
@@ -109,7 +109,7 @@
  "R" 1 "A" 23
 ! entry.KCX.unit.name single str
  "KCX"
-! entry.KCX.unit.positions table dbl x dbl y dbl z
+!entry.KCX.unit. positions table dbl x dbl y dbl z
  3.325770 1.547909 -0.000002
  3.909407 0.723611 -0.000008
  1.945916 1.277155 0.000028
@@ -139,7 +139,7 @@
  "KCX" 1 24 1 "?" 0
 !entry.KCX.unit.residuesPdbSequenceNumber array int
  0
-!entry.KCX.unit. solventcap array dbl
+!entry.KCX.unit.solventcap array dbl
  -1.000000
  0.0
  0.0
