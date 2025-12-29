@@ -23,7 +23,7 @@ matplotlib.use('Agg')
 # =============================================================================
 # TAMARIND PATH CONFIGURATION
 # =============================================================================
-# File inputs: Read from inputs/settingName.ext (use exact setting name)
+# File inputs:  Read from inputs/settingName.ext (use exact setting name)
 PDB_FILE_INPUT = "inputs/pdbFile.pdb"
 LIGAND_FILE_INPUT = "inputs/ligandFile.sdf"
 
@@ -31,8 +31,8 @@ LIGAND_FILE_INPUT = "inputs/ligandFile.sdf"
 OUTPUT_DIR = "out"
 
 # Define subdirectories for organization
-PREP_DIR = os.path.join(OUTPUT_DIR, "prep")
-PARAMS_DIR = os.path.join(OUTPUT_DIR, "params")
+PREP_DIR = os. path.join(OUTPUT_DIR, "prep")
+PARAMS_DIR = os. path.join(OUTPUT_DIR, "params")
 
 # KCX parameters bundled in Docker image
 KCX_PARAMS_DIR = "/app/kcx_params"
@@ -40,19 +40,20 @@ KCX_PARAMS_DIR = "/app/kcx_params"
 # =============================================================================
 # PARAMETERS FROM ENVIRONMENT VARIABLES
 # =============================================================================
-# Job name: Available as os.getenv('JobName')
-job_name = os.getenv('JobName', 'openmm_simulation')
+# Job name:  Available as os.getenv('JobName')
+job_name = os. getenv('JobName', 'openmm_simulation')
 ligand_charge = int(os.getenv('ligandCharge', '0'))
-force_field = os.getenv('forceField', 'ff19SB')
-water_model = os.getenv('waterModel', 'tip3p')
+# FIXED: Force field must be lowercase for TLeap compatibility
+force_field = os.getenv('forceField', 'ff19sb').lower()
+water_model = os.getenv('waterModel', 'tip3p').lower()
 box_size = float(os.getenv('boxSize', '12.0'))
 ionic_strength = float(os.getenv('ionicStrength', '0.15'))
 minimization_steps = int(os.getenv('minimizationSteps', '10000'))
-equilibration_time = float(os.getenv('equilibrationTime', '0.2'))
+equilibration_time = float(os. getenv('equilibrationTime', '0.2'))
 production_time = float(os.getenv('productionTime', '1.0'))
 timestep = float(os.getenv('timestep', '2.0'))
-temperature = float(os.getenv('temperature', '310.0'))
-pressure = float(os.getenv('pressure', '1.0'))
+temperature = float(os. getenv('temperature', '310.0'))
+pressure = float(os. getenv('pressure', '1.0'))
 constraints = os.getenv('constraints', 'HBonds')
 prod_traj_freq = int(os.getenv('prodTrajFreq', '5000'))
 step_size = int(os.getenv('stepSize', '5'))
@@ -68,9 +69,10 @@ default_platform = os.getenv('OPENMM_DEFAULT_PLATFORM', 'CUDA')
 def run_command(cmd, description):
     """Run subprocess command with error handling"""
     print(f"--> Running: {description}")
+    print(f"    Command: {' '.join(cmd)}")
     # Use unbuffered output to ensure logs appear in Tamarind immediately
     process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        cmd, stdout=subprocess. PIPE, stderr=subprocess.PIPE, text=True
     )
     stdout, stderr = process.communicate()
     
@@ -79,6 +81,9 @@ def run_command(cmd, description):
         print(f"STDOUT: {stdout}")
         print(f"STDERR: {stderr}")
         sys.exit(1)
+    else: 
+        if stdout. strip():
+            print(f"    Output: {stdout. strip()[:200]}")
     return process
 
 def print_gpu_info():
@@ -99,16 +104,17 @@ def print_gpu_info():
 
 def get_kcx_parameters():
     """Use pre-bundled KCX parameters from Docker image"""
-    frcmod_path = os.path.join(KCX_PARAMS_DIR, 'kcx.frcmod')
-    lib_path = os.path.join(KCX_PARAMS_DIR, 'kcx.lib')
+    frcmod_path = os.path.join(KCX_PARAMS_DIR, 'kcx. frcmod')
+    lib_path = os. path.join(KCX_PARAMS_DIR, 'kcx.lib')
     
     if not os.path.exists(frcmod_path):
-        print(f"ERROR: KCX frcmod not found at {frcmod_path}")
-        # Only exit if strict requirement, otherwise might proceed if standard
-        sys.exit(1)
-    if not os.path.exists(lib_path):
-        print(f"ERROR: KCX lib not found at {lib_path}")
-        sys.exit(1)
+        print(f"WARNING: KCX frcmod not found at {frcmod_path}")
+        print("    Continuing without KCX parameters (protein-only mode)")
+        return None, None
+    if not os.path. exists(lib_path):
+        print(f"WARNING: KCX lib not found at {lib_path}")
+        print("    Continuing without KCX parameters (protein-only mode)")
+        return None, None
     
     print(f"--> Using KCX parameters from {KCX_PARAMS_DIR}")
     return frcmod_path, lib_path
@@ -117,8 +123,8 @@ def prepare_ligand(lig_file, lig_charge, output_dir):
     """Prepare ligand with Antechamber and GAFF2"""
     print(f"--> Preparing Ligand: {lig_file}")
     os.makedirs(output_dir, exist_ok=True)
-    mol2_out = os.path.join(output_dir, 'ligand.mol2')
-    frcmod_out = os.path.join(output_dir, 'ligand.frcmod')
+    mol2_out = os.path. join(output_dir, 'ligand.mol2')
+    frcmod_out = os.path. join(output_dir, 'ligand.frcmod')
     
     # Run antechamber
     cmd = [
@@ -130,7 +136,7 @@ def prepare_ligand(lig_file, lig_charge, output_dir):
     run_command(cmd, "Antechamber")
     
     # Run parmchk2
-    cmd = ['parmchk2', '-i', mol2_out, '-f', 'mol2', '-o', frcmod_out]
+    cmd = ['parmchk2', '-i', mol2_out, '-f', 'mol2', '-o', frcmod_out, '-s', 'gaff2']
     run_command(cmd, "Parmchk2")
     
     print(f"--> Ligand prepared:  {mol2_out}")
@@ -140,9 +146,9 @@ def prepare_protein(pdb_path, output_dir):
     """Prepare protein structure with pdb4amber"""
     print(f"--> Preparing Protein: {pdb_path}")
     os.makedirs(output_dir, exist_ok=True)
-    protein_out = os.path.join(output_dir, 'protein_fixed.pdb')
+    protein_out = os. path.join(output_dir, 'protein_fixed.pdb')
     
-    cmd = ['pdb4amber', '-i', pdb_path, '-o', protein_out, '--dry']
+    cmd = ['pdb4amber', '-i', pdb_path, '-o', protein_out, '--dry', '--nohyd']
     run_command(cmd, "PDB4AMBER")
     
     print(f"--> Protein prepared:  {protein_out}")
@@ -152,32 +158,56 @@ def prepare_protein(pdb_path, output_dir):
 # TLEAP & SYSTEM BUILDING
 # =============================================================================
 
+def get_water_box_name(water_model):
+    """Get the correct water box name for TLeap"""
+    water_boxes = {
+        'tip3p': 'TIP3PBOX',
+        'tip4pew': 'TIP4PEWBOX',
+        'opc': 'OPCBOX',
+        'opc3': 'OPC3BOX',
+        'spce': 'SPCBOX',
+    }
+    return water_boxes.get(water_model. lower(), 'TIP3PBOX')
+
 def build_system(protein_pdb, lig_mol2, lig_frcmod, kcx_frcmod, kcx_lib, output_dir):
     """Build solvated system with TLeap"""
     print("--> Building System with TLeap")
     os.makedirs(output_dir, exist_ok=True)
     
-    tleap_in = os.path.join(output_dir, 'tleap.in')
+    tleap_in = os.path. join(output_dir, 'tleap.in')
     prmtop = os.path.join(output_dir, 'system.prmtop')
     inpcrd = os.path.join(output_dir, 'system.inpcrd')
     
-    # Build TLeap script
-    script = f"""source leaprc.protein.{force_field}
-source leaprc.water.{water_model}
-source leaprc.gaff2
+    # Get water box name
+    water_box = get_water_box_name(water_model)
+    
+    # Build TLeap script - FIXED: Use lowercase force field name
+    script = f"""# TLeap input script for {job_name}
+# Force field: {force_field}, Water model: {water_model}
 
-# Load KCX parameters
+source leaprc.protein.{force_field}
+source leaprc.water.{water_model}
+source leaprc. gaff2
+"""
+    
+    # Load KCX parameters if available
+    if kcx_frcmod and kcx_lib:
+        script += f"""
+# Load KCX (carboxylated lysine) parameters
 loadamberparams {kcx_frcmod}
 loadoff {kcx_lib}
-
-# Load protein
+"""
+    
+    # Load protein
+    script += f"""
+# Load protein structure
 mol = loadpdb {protein_pdb}
 """
     
     # Add ligand if present
     if lig_mol2 and os.path.exists(lig_mol2):
         script += f"""
-# Load ligand parameters
+# Load ligand parameters and structure
 loadamberparams {lig_frcmod}
 LIG = loadmol2 {lig_mol2}
 
@@ -187,19 +217,24 @@ system = combine {{mol LIG}}
     else:
         script += "system = mol\n"
     
-    # Solvate and neutralize
+    # Solvate and neutralize - FIXED: Use correct water box name
     script += f"""
-# Solvate system
-solvatebox system TIP3PBOX {box_size}
+# Solvate system with {box_size} Angstrom buffer
+solvatebox system {water_box} {box_size}
 
-# Add ions to neutralize and set ionic strength
-addionsrand system Na+ 0
-addionsrand system Cl- 0
+# Add ions to neutralize system
+addions system Na+ 0
+addions system Cl- 0
+
+# Check system for errors
+check system
 
 # Save topology and coordinates
 saveamberparm system {prmtop} {inpcrd}
 
-# Quit
+# Save solvated PDB for visualization
+savepdb system {os.path.join(output_dir, 'system_solvated.pdb')}
+
 quit
 """
     
@@ -207,21 +242,42 @@ quit
     with open(tleap_in, 'w') as f:
         f.write(script)
     
+    print(f"--> TLeap script written to: {tleap_in}")
+    
     # Run TLeap
-    print(f"--> Running TLeap (script: {tleap_in})")
     run_command(['tleap', '-f', tleap_in], "TLeap")
     
     # Verify output files
-    if not os.path.exists(prmtop) or not os.path.exists(inpcrd):
-        print("ERROR: TLeap failed to generate topology files")
+    if not os.path.exists(prmtop):
+        print(f"ERROR: TLeap failed to generate topology file:  {prmtop}")
+        sys.exit(1)
+    if not os.path. exists(inpcrd):
+        print(f"ERROR: TLeap failed to generate coordinate file: {inpcrd}")
         sys.exit(1)
     
-    print(f"--> System built: {prmtop}, {inpcrd}")
+    # Print file sizes for verification
+    prmtop_size = os.path. getsize(prmtop) / 1024
+    inpcrd_size = os. path.getsize(inpcrd) / 1024
+    print(f"--> System built successfully:")
+    print(f"    Topology:  {prmtop} ({prmtop_size:.1f} KB)")
+    print(f"    Coordinates: {inpcrd} ({inpcrd_size:.1f} KB)")
+    
     return prmtop, inpcrd
 
 # =============================================================================
 # OPENMM SIMULATION (A100 OPTIMIZED)
 # =============================================================================
+
+def get_constraint_type(constraint_str):
+    """Convert constraint string to OpenMM constraint type"""
+    import openmm.app as app
+    constraint_map = {
+        'hbonds': app.HBonds,
+        'allbonds': app.AllBonds,
+        'hangles': app.HAngles,
+        'none': None,
+    }
+    return constraint_map.get(constraint_str.lower(), app.HBonds)
 
 def run_simulation(prmtop_path, inpcrd_path):
     """Run OpenMM simulation optimized for NVIDIA A100"""
@@ -234,20 +290,26 @@ def run_simulation(prmtop_path, inpcrd_path):
     # Print available platforms
     print("--> Available OpenMM Platforms:")
     for i in range(mm.Platform.getNumPlatforms()):
-        platform = mm.Platform.getPlatform(i)
+        platform = mm.Platform. getPlatform(i)
         print(f"    {i}: {platform.getName()}")
 
     # Load topology and coordinates
     print("--> Loading topology and coordinates")
-    prmtop = app.AmberPrmtopFile(prmtop_path)
+    prmtop = app. AmberPrmtopFile(prmtop_path)
     inpcrd = app.AmberInpcrdFile(inpcrd_path)
+    
+    print(f"    Atoms: {prmtop.topology.getNumAtoms()}")
+    print(f"    Residues: {prmtop.topology. getNumResidues()}")
 
+    # Get constraint type
+    constraint_type = get_constraint_type(constraints)
+    
     # 1. System Creation with optimized settings
     print("--> Creating system")
     system = prmtop.createSystem(
         nonbondedMethod=app.PME,
-        nonbondedCutoff=1.0*unit.nanometer,
-        constraints=app.HBonds if constraints == 'HBonds' else None,
+        nonbondedCutoff=1.0*unit. nanometer,
+        constraints=constraint_type,
         rigidWater=True,
         hydrogenMass=None
     )
@@ -258,6 +320,9 @@ def run_simulation(prmtop_path, inpcrd_path):
         temperature*unit.kelvin, 
         25
     ))
+    print(f"    Constraints: {constraints}")
+    print(f"    Pressure: {pressure} bar")
+    print(f"    Temperature:  {temperature} K")
 
     # 2. Integrator (LangevinMiddle is best for modern GPUs)
     print("--> Setting up integrator")
@@ -267,7 +332,7 @@ def run_simulation(prmtop_path, inpcrd_path):
         timestep*unit.femtosecond
     )
 
-    # 3. Platform Configuration for A100 (aligned with Dockerfile ENV)
+    # 3. Platform Configuration for A100
     print("--> Configuring platform")
     platform = None
     properties = {}
@@ -276,12 +341,14 @@ def run_simulation(prmtop_path, inpcrd_path):
     for platform_name in [default_platform, 'CUDA', 'OpenCL', 'CPU']: 
         try:
             platform = mm.Platform.getPlatformByName(platform_name)
-            if platform_name in ['CUDA', 'OpenCL']: 
+            if platform_name == 'CUDA':
                 properties = {
                     'Precision': cuda_precision,
                 }
-                if platform_name == 'CUDA': 
-                    properties['DisablePmeStream'] = 'false'
+            elif platform_name == 'OpenCL':
+                properties = {
+                    'Precision':  cuda_precision,
+                }
             print(f"--> [SUCCESS] Using {platform_name} Platform")
             break
         except Exception as e:
@@ -294,34 +361,37 @@ def run_simulation(prmtop_path, inpcrd_path):
 
     # 4. Create simulation context
     if properties:
-        sim = app.Simulation(prmtop.topology, system, integrator, platform, properties)
+        sim = app.Simulation(prmtop. topology, system, integrator, platform, properties)
     else:
-        sim = app.Simulation(prmtop.topology, system, integrator, platform)
+        sim = app.Simulation(prmtop. topology, system, integrator, platform)
     
     sim.context.setPositions(inpcrd.positions)
     if inpcrd.boxVectors:
-        sim.context.setPeriodicBoxVectors(*inpcrd.boxVectors)
+        sim.context.setPeriodicBoxVectors(*inpcrd. boxVectors)
 
     # Diagnostic information
     print(f"--> [PLATFORM] {platform.getName()}")
-    if platform.getName() == 'CUDA': 
-        print(f"    Device: {platform.getPropertyValue(sim.context, 'DeviceName')}")
-        print(f"    Device Index: {platform.getPropertyValue(sim.context, 'DeviceIndex')}")
-        print(f"    Precision: {platform.getPropertyValue(sim.context, 'Precision')}")
-        print(f"    CUDA Compiler: {platform.getPropertyValue(sim.context, 'CudaCompiler')}")
+    if platform.getName() == 'CUDA':  
+        try:
+            print(f"    Device: {platform.getPropertyValue(sim.context, 'DeviceName')}")
+            print(f"    Device Index: {platform.getPropertyValue(sim. context, 'DeviceIndex')}")
+            print(f"    Precision: {platform.getPropertyValue(sim.context, 'Precision')}")
+        except Exception as e:
+            print(f"    (Could not retrieve device info:  {e})")
 
     # 5. Energy Minimization
     print("--> Minimizing energy...")
-    print(f"    Target:  {minimization_steps} steps")
+    print(f"    Target: {minimization_steps} steps")
     sim.minimizeEnergy(maxIterations=minimization_steps)
     
-    state = sim.context.getState(getEnergy=True)
-    pot_energy = state.getPotentialEnergy()
+    state = sim.context. getState(getEnergy=True)
+    pot_energy = state. getPotentialEnergy()
     print(f"--> Minimization complete.  Potential Energy: {pot_energy}")
 
-    # 6. Equilibration (NVT then NPT)
+    # 6.  Equilibration (NVT then NPT)
     print("--> Running equilibration...")
     equil_steps = int((equilibration_time * 1e6) / timestep)
+    print(f"    Equilibration time: {equilibration_time} ns")
     print(f"    Equilibration steps: {equil_steps}")
     sim.step(equil_steps)
     print("--> Equilibration complete")
@@ -336,10 +406,10 @@ def run_simulation(prmtop_path, inpcrd_path):
     
     # Setup reporters - save to out/ directory
     dcd_file = os.path.join(OUTPUT_DIR, 'trajectory.dcd')
-    log_file = os.path.join(OUTPUT_DIR, 'simulation.log')
-    checkpoint_file = os.path.join(OUTPUT_DIR, 'checkpoint.chk')
+    log_file = os. path.join(OUTPUT_DIR, 'simulation.log')
+    checkpoint_file = os. path.join(OUTPUT_DIR, 'checkpoint. chk')
     
-    sim.reporters.append(app.DCDReporter(dcd_file, prod_traj_freq))
+    sim.reporters. append(app.DCDReporter(dcd_file, prod_traj_freq))
     sim.reporters.append(app.StateDataReporter(
         log_file, 
         prod_traj_freq,
@@ -355,7 +425,7 @@ def run_simulation(prmtop_path, inpcrd_path):
     ))
     
     # Checkpoint reporter for restart capability
-    sim.reporters.append(app.CheckpointReporter(checkpoint_file, prod_traj_freq * 10))
+    sim.reporters.append(app. CheckpointReporter(checkpoint_file, prod_traj_freq * 10))
     
     # Also print to stdout
     sim.reporters.append(app.StateDataReporter(
@@ -376,7 +446,7 @@ def run_simulation(prmtop_path, inpcrd_path):
     final_pdb = os.path.join(OUTPUT_DIR, 'final_structure.pdb')
     state = sim.context.getState(getPositions=True, getVelocities=True, getEnergy=True)
     with open(final_pdb, 'w') as f:
-        app.PDBFile.writeFile(sim.topology, state.getPositions(), f)
+        app.PDBFile. writeFile(sim.topology, state.getPositions(), f)
     
     # Save final checkpoint
     sim.saveCheckpoint(os.path.join(OUTPUT_DIR, 'final_checkpoint.chk'))
@@ -412,6 +482,11 @@ def run_analysis(dcd_path, pdb_path):
         # Calculate RMSD for backbone atoms
         print("    Calculating backbone RMSD...")
         backbone = traj.topology.select('backbone')
+        
+        if len(backbone) == 0:
+            print("    WARNING: No backbone atoms found, using all heavy atoms")
+            backbone = traj.topology.select('not element H')
+        
         rmsd = md.rmsd(traj, traj[0], atom_indices=backbone)
         
         # Convert to Angstroms and ns
@@ -435,7 +510,7 @@ def run_analysis(dcd_path, pdb_path):
         
         print(f"--> RMSD Analysis Complete:")
         print(f"    Mean RMSD: {rmsd_angstrom.mean():.2f} Å")
-        print(f"    Max RMSD: {rmsd_angstrom.max():.2f} Å")
+        print(f"    Max RMSD: {rmsd_angstrom. max():.2f} Å")
         print(f"    Min RMSD: {rmsd_angstrom.min():.2f} Å")
         print(f"    Plot saved:  {rmsd_plot}")
         
@@ -445,7 +520,9 @@ def run_analysis(dcd_path, pdb_path):
                    header='Time(ns) RMSD(Angstrom)', fmt='%.4f')
         print(f"    Data saved:  {rmsd_data}")
         
-    except Exception as e: 
+    except ImportError as e: 
+        print(f"--> Analysis skipped: Missing required library ({e})")
+    except Exception as e:  
         print(f"--> Analysis failed: {e}")
         traceback.print_exc()
 
@@ -464,25 +541,39 @@ if __name__ == "__main__":
         # 0. Print GPU environment info
         print_gpu_info()
         
+        # Print simulation parameters
+        print("\n--> Simulation Parameters:")
+        print(f"    Force Field: {force_field}")
+        print(f"    Water Model: {water_model}")
+        print(f"    Box Size: {box_size} Å")
+        print(f"    Temperature: {temperature} K")
+        print(f"    Pressure: {pressure} bar")
+        print(f"    Timestep: {timestep} fs")
+        print(f"    Equilibration:  {equilibration_time} ns")
+        print(f"    Production: {production_time} ns")
+        
         # 1. Create all necessary directories - save to out/
         print("\n--> Setting up directories")
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         os.makedirs(PREP_DIR, exist_ok=True)
         os.makedirs(PARAMS_DIR, exist_ok=True)
         for directory in [OUTPUT_DIR, PREP_DIR, PARAMS_DIR]:
-            print(f"    Created: {directory}")
+            print(f"    Created:  {directory}")
         
-        # 2. Validate inputs
+        # 2.  Validate inputs
         print("\n--> Validating inputs")
-        if not os.path.exists(PDB_FILE_INPUT):
+        if not os.path. exists(PDB_FILE_INPUT):
             print(f"FATAL ERROR: Missing PDB file at {PDB_FILE_INPUT}")
-            # Tamarind check: Ensure input name matches variable name (pdbFile)
-            print(f"Checking current directory inputs/: {os.listdir('inputs') if os.path.exists('inputs') else 'inputs/ missing'}")
+            # Tamarind check:  Ensure input name matches variable name (pdbFile)
+            if os.path.exists('inputs'):
+                print(f"    Contents of inputs/: {os.listdir('inputs')}")
+            else:
+                print("    inputs/ directory does not exist")
             sys.exit(1)
         print(f"    Found PDB:  {PDB_FILE_INPUT}")
         
         has_ligand = os.path.exists(LIGAND_FILE_INPUT)
-        if has_ligand: 
+        if has_ligand:  
             print(f"    Found Ligand: {LIGAND_FILE_INPUT}")
         else:
             print(f"    No ligand file detected (protein-only simulation)")
@@ -493,11 +584,11 @@ if __name__ == "__main__":
         
         # 4. Prepare ligand (if present)
         lig_mol2, lig_frcmod = None, None
-        if has_ligand: 
+        if has_ligand:  
             print("\n--> Preparing ligand")
             lig_mol2, lig_frcmod = prepare_ligand(LIGAND_FILE_INPUT, ligand_charge, PREP_DIR)
         
-        # 5. Prepare protein
+        # 5.  Prepare protein
         print("\n--> Preparing protein")
         fixed_protein = prepare_protein(PDB_FILE_INPUT, PREP_DIR)
         
@@ -524,15 +615,15 @@ if __name__ == "__main__":
         print(f"All results saved to: {OUTPUT_DIR}/")
         print(f"\nKey output files:")
         print(f"  - Topology: {OUTPUT_DIR}/system.prmtop")
-        print(f"  - Trajectory: {OUTPUT_DIR}/trajectory.dcd")
+        print(f"  - Trajectory: {OUTPUT_DIR}/trajectory. dcd")
         print(f"  - Final structure: {OUTPUT_DIR}/final_structure.pdb")
         print(f"  - Simulation log: {OUTPUT_DIR}/simulation.log")
         print(f"  - Checkpoints: {OUTPUT_DIR}/checkpoint.chk, {OUTPUT_DIR}/final_checkpoint.chk")
         print(f"  - RMSD plot: {OUTPUT_DIR}/rmsd_analysis.png")
-        print(f"  - RMSD data: {OUTPUT_DIR}/rmsd_data.txt")
+        print(f"  - RMSD data:  {OUTPUT_DIR}/rmsd_data. txt")
         print(f"{'='*60}\n")
         
-    except Exception as e:
+    except Exception as e: 
         print(f"\nCRITICAL FAILURE: {e}")
-        traceback.print_exc()
+        traceback. print_exc()
         sys.exit(1)
