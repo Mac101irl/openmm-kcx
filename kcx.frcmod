@@ -3,7 +3,7 @@ Derived from lysine parameters with carbamate modifications
 Reference: DOI 10.1002/jcc.21836
 
 MASS
-CY 12. 01         0.360             sp2 carboxyl carbon of carbamate
+CY 12.01         0.360             sp2 carboxyl carbon of carbamate
 
 BOND
 CY-O2   648.0    1.250       carboxylate C-O (same as COO-)
