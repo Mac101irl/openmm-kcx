@@ -1,5 +1,5 @@
 # --- Stage 1: Build Environment ---
-FROM mambaorg/micromamba: 1.5-jammy AS builder
+FROM mambaorg/micromamba:1.5-jammy AS builder
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -73,8 +73,10 @@ WORKDIR /app
 
 RUN mkdir -p /app/kcx_params /app/inputs /app/out
 
-COPY kcx. lib kcx. frcmod /app/kcx_params/
+# Copy KCX parameter files
+COPY kcx.lib kcx.frcmod /app/kcx_params/
 
+# Copy the main simulation script
 COPY run_openmm_kcx_v5.py /app/run_openmm_kcx_v5.py
 
 RUN chmod +x /app/run_openmm_kcx_v5.py
