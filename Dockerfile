@@ -98,5 +98,3 @@ COPY kcx.lib kcx.frcmod /app/kcx_params/
 
 # Copy the main simulation script
 COPY run_openmm_kcx_v5.py /app/run_openmm_kcx_v5.py
-
-RUN chmod +x /app/run_openmm_kcx_v5.py
