@@ -106,4 +106,4 @@ RUN mkdir -p /app/kcx_params /app/inputs /app/out
 COPY kcx.lib kcx.frcmod /app/kcx_params/
 
 # Copy the main simulation script
-COPY run_openmm_kcx_v5.py /app/run_openmm_kcx_v5.py
+COPY entrypoint.py /app/entrypoint.py
