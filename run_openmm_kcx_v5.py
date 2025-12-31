@@ -38,6 +38,7 @@ production_time = float(os.getenv('productionTime', '1.0'))
 timestep = float(os.getenv('timestep', '2.0'))
 temperature = float(os.getenv('temperature', '310.0'))
 pressure = float(os.getenv('pressure', '1.0'))
+pH = float(os.getenv('pH', '7.0'))
 constraints = os.getenv('constraints', 'HBonds')
 prod_traj_freq = int(os.getenv('prodTrajFreq', '5000'))
 step_size = int(os.getenv('stepSize', '5'))
@@ -100,6 +101,121 @@ def get_kcx_parameters():
     print(f"--> Using KCX parameters from {KCX_PARAMS_DIR}")
     return frcmod_path, lib_path
 
+def validate_kcx_residues(pdb_path):
+    """
+    Validate KCX (carboxylated lysine) residues in PDB file.
+    
+    Checks:
+    1. Presence of KCX residues
+    2. Required carbamate atoms (NZ, HZ, CY, OQ1, OQ2)
+    3. Basic geometry validation
+    4. pH-dependent warnings
+    
+    Returns:
+        dict: Validation results with KCX info
+    """
+    print(f"--> Validating KCX residues in {pdb_path}")
+    
+    # Expected carbamate atoms in KCX (from kcx.lib)
+    REQUIRED_CARBAMATE_ATOMS = {'NZ', 'CY', 'OQ1', 'OQ2'}  # HZ may be missing in some PDBs
+    OPTIONAL_ATOMS = {'HZ'}  # Hydrogen may not be in crystal structures
+    
+    # Parse PDB and collect KCX residues
+    kcx_residues = {}  # {(chain, resnum): {atom_name: (x, y, z)}}
+    
+    with open(pdb_path, 'r') as f:
+        for line in f:
+            if line.startswith(('ATOM', 'HETATM')):
+                res_name = line[17:20].strip()
+                if res_name == 'KCX':
+                    chain = line[21].strip() or 'A'
+                    res_num = int(line[22:26].strip())
+                    atom_name = line[12:16].strip()
+                    try:
+                        x = float(line[30:38])
+                        y = float(line[38:46])
+                        z = float(line[46:54])
+                    except ValueError:
+                        x, y, z = 0.0, 0.0, 0.0
+                    
+                    key = (chain, res_num)
+                    if key not in kcx_residues:
+                        kcx_residues[key] = {}
+                    kcx_residues[key][atom_name] = (x, y, z)
+    
+    # Report findings
+    results = {
+        'found': len(kcx_residues) > 0,
+        'count': len(kcx_residues),
+        'residues': [],
+        'warnings': [],
+        'errors': []
+    }
+    
+    if not kcx_residues:
+        print("    No KCX residues found in PDB")
+        print("    NOTE: If your protein has carboxylated lysine, ensure it's labeled as 'KCX'")
+        print("          AlphaFold structures may label KCX as 'LYS' - manual editing required")
+        results['warnings'].append("No KCX residues found - check if lysines should be carboxylated")
+        return results
+    
+    print(f"    Found {len(kcx_residues)} KCX residue(s)")
+    
+    for (chain, res_num), atoms in kcx_residues.items():
+        res_id = f"KCX-{chain}{res_num}"
+        atom_names = set(atoms.keys())
+        
+        # Check for required carbamate atoms
+        missing_required = REQUIRED_CARBAMATE_ATOMS - atom_names
+        missing_optional = OPTIONAL_ATOMS - atom_names
+        
+        res_info = {
+            'chain': chain,
+            'resnum': res_num,
+            'atoms': list(atom_names),
+            'valid': True
+        }
+        
+        if missing_required:
+            print(f"    ✗ {res_id}: MISSING carbamate atoms: {missing_required}")
+            print(f"      This KCX may not be parameterized correctly!")
+            results['errors'].append(f"{res_id} missing atoms: {missing_required}")
+            res_info['valid'] = False
+        else:
+            print(f"    ✓ {res_id}: All carbamate atoms present")
+            
+            # Geometry check - CY-OQ bond length should be ~1.25 Å
+            if 'CY' in atoms and 'OQ1' in atoms:
+                cy = atoms['CY']
+                oq1 = atoms['OQ1']
+                dist = ((cy[0]-oq1[0])**2 + (cy[1]-oq1[1])**2 + (cy[2]-oq1[2])**2) ** 0.5
+                if 1.15 <= dist <= 1.35:
+                    print(f"      ✓ CY-OQ1 bond length: {dist:.2f} Å (expected ~1.25 Å)")
+                else:
+                    print(f"      ⚠ CY-OQ1 bond length: {dist:.2f} Å (expected ~1.25 Å) - unusual!")
+                    results['warnings'].append(f"{res_id} unusual CY-OQ1 distance: {dist:.2f} Å")
+        
+        if missing_optional:
+            print(f"      Note: Missing optional atoms {missing_optional} (will be added by reduce)")
+        
+        results['residues'].append(res_info)
+    
+    # pH-specific warnings for KCX
+    if pH < 6.0:
+        print(f"    ⚠ WARNING: pH {pH} is near/below KCX carbamate pKa (~5.5)")
+        print(f"      The carbamate group may be partially protonated at this pH")
+        print(f"      Current parameters assume deprotonated (charged) carbamate")
+        results['warnings'].append(f"pH {pH} may affect KCX protonation state")
+    
+    # Summary
+    valid_count = sum(1 for r in results['residues'] if r['valid'])
+    print(f"    Summary: {valid_count}/{len(kcx_residues)} KCX residues validated successfully")
+    
+    if results['errors']:
+        print(f"    ⚠ {len(results['errors'])} error(s) found - simulation may fail!")
+    
+    return results
+
 def prepare_ligand(lig_file, lig_charge, output_dir):
     """Prepare ligand with Antechamber and GAFF2"""
     print(f"--> Preparing Ligand: {lig_file}")
@@ -122,16 +238,107 @@ def prepare_ligand(lig_file, lig_charge, output_dir):
     return mol2_out, frcmod_out
 
 def prepare_protein(pdb_path, output_dir):
-    """Prepare protein structure with pdb4amber"""
+    """Prepare protein structure with pdb4amber and pH-dependent protonation"""
     print(f"--> Preparing Protein: {pdb_path}")
+    print(f"    Target pH: {pH}")
     os.makedirs(output_dir, exist_ok=True)
-    protein_out = os.path.join(output_dir, 'protein_fixed.pdb')
     
-    cmd = ['pdb4amber', '-i', pdb_path, '-o', protein_out, '--dry', '--nohyd']
-    run_command(cmd, "PDB4AMBER")
+    # Step 1: Clean PDB with pdb4amber (remove waters, alternate conformations)
+    cleaned_pdb = os.path.join(output_dir, 'protein_cleaned.pdb')
+    cmd = ['pdb4amber', '-i', pdb_path, '-o', cleaned_pdb, '--dry', '--nohyd']
+    run_command(cmd, "PDB4AMBER (clean)")
+    
+    # Step 2: Add hydrogens with reduce at target pH
+    reduced_pdb = os.path.join(output_dir, 'protein_reduced.pdb')
+    try:
+        # reduce uses -build to add hydrogens, -HIS to flip histidines optimally
+        cmd = ['reduce', '-build', '-his', cleaned_pdb]
+        print(f"--> Running: Add hydrogens with reduce")
+        print(f"    Command: {' '.join(cmd)}")
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        stdout, stderr = process.communicate()
+        
+        if process.returncode == 0:
+            with open(reduced_pdb, 'w') as f:
+                f.write(stdout)
+            print(f"    Hydrogens added successfully")
+        else:
+            print(f"    WARNING: reduce failed, continuing with cleaned PDB")
+            print(f"    STDERR: {stderr[:200]}")
+            reduced_pdb = cleaned_pdb
+    except FileNotFoundError:
+        print(f"    WARNING: reduce not found, skipping hydrogen addition")
+        reduced_pdb = cleaned_pdb
+    
+    # Step 3: Assign histidine protonation states based on pH
+    protein_out = os.path.join(output_dir, 'protein_fixed.pdb')
+    assign_histidine_protonation(reduced_pdb, protein_out, pH)
+    
+    # pH warnings
+    if pH < 5.0:
+        print(f"    WARNING: Low pH ({pH}) - Asp/Glu may need protonation (ASH/GLH)")
+        print(f"             Consider manual review of carboxylate residues")
+    elif pH > 9.0:
+        print(f"    WARNING: High pH ({pH}) - Lys/Cys/Tyr may need deprotonation")
+        print(f"             Consider manual review of titratable residues")
+    
+    # KCX-specific warning
+    if pH < 6.0:
+        print(f"    WARNING: KCX carbamate is pH-sensitive (pKa ~5.5)")
+        print(f"             At pH {pH}, KCX may be partially protonated")
     
     print(f"--> Protein prepared: {protein_out}")
     return protein_out
+
+def assign_histidine_protonation(input_pdb, output_pdb, target_pH):
+    """
+    Assign histidine protonation states based on target pH.
+    
+    Histidine pKa ~6.0:
+    - pH < 6.0: HIP (doubly protonated, +1 charge)
+    - pH 6.0-7.0: Mixed HID/HIE (singly protonated, neutral)
+    - pH > 7.0: HIE preferred (epsilon-protonated, neutral)
+    
+    TLeap recognizes: HIS -> HIE, HID -> HID, HIP -> HIP
+    """
+    print(f"    Assigning histidine protonation for pH {target_pH}")
+    
+    # Determine histidine state based on pH
+    if target_pH < 6.0:
+        his_state = 'HIP'  # Doubly protonated (charged)
+        print(f"      pH < 6.0: Using HIP (doubly protonated, +1)")
+    elif target_pH < 7.0:
+        his_state = 'HID'  # Delta-protonated (neutral) - good for H-bonding
+        print(f"      pH 6.0-7.0: Using HID (delta-protonated, neutral)")
+    else:
+        his_state = 'HIE'  # Epsilon-protonated (neutral) - most common at physiological pH
+        print(f"      pH >= 7.0: Using HIE (epsilon-protonated, neutral)")
+    
+    # Read and modify PDB
+    his_count = 0
+    with open(input_pdb, 'r') as f_in:
+        lines = f_in.readlines()
+    
+    with open(output_pdb, 'w') as f_out:
+        for line in lines:
+            if line.startswith(('ATOM', 'HETATM')):
+                res_name = line[17:20].strip()
+                if res_name == 'HIS':
+                    # Replace HIS with appropriate protonation state
+                    line = line[:17] + f'{his_state:<3}' + line[20:]
+                    his_count += 1
+            f_out.write(line)
+    
+    if his_count > 0:
+        # Count unique residues (divide by ~10 atoms per His)
+        unique_his = his_count // 10 + (1 if his_count % 10 > 0 else 0)
+        print(f"      Renamed ~{unique_his} histidine residue(s) to {his_state}")
+    else:
+        print(f"      No histidine residues found")
+    
+    return output_pdb
 
 # =============================================================================
 # TLEAP & SYSTEM BUILDING
@@ -147,6 +354,43 @@ def get_water_box_name(water_model):
         'spce': 'SPCBOX',
     }
     return water_boxes.get(water_model.lower(), 'TIP3PBOX')
+
+def calculate_ion_pairs(ionic_strength_M, box_padding_A, estimated_protein_size_A=60):
+    """
+    Calculate number of Na+/Cl- ion pairs needed for target ionic strength.
+    
+    Args:
+        ionic_strength_M: Target ionic strength in Molar (e.g., 0.15 for 150 mM)
+        box_padding_A: Box padding in Angstroms
+        estimated_protein_size_A: Estimated protein diameter in Angstroms
+    
+    Returns:
+        Number of ion pairs to add (after neutralization)
+    """
+    if ionic_strength_M <= 0:
+        return 0
+    
+    # Estimate box edge length (protein + padding on each side)
+    estimated_box_edge_A = estimated_protein_size_A + 2 * box_padding_A
+    
+    # Volume in liters: (Angstrom * 1e-8 cm/A)^3 * 1e-3 L/cm^3
+    volume_liters = (estimated_box_edge_A * 1e-8) ** 3 * 1e-3
+    
+    # Number of ion pairs: concentration * volume * Avogadro's number
+    # For NaCl: ionic_strength = concentration (since both ions are monovalent)
+    avogadro = 6.022e23
+    num_ion_pairs = int(ionic_strength_M * volume_liters * avogadro)
+    
+    # Ensure at least 1 pair if ionic strength is requested
+    num_ion_pairs = max(1, num_ion_pairs)
+    
+    print(f"    Ionic strength calculation:")
+    print(f"      Target: {ionic_strength_M*1000:.0f} mM NaCl")
+    print(f"      Est. box edge: ~{estimated_box_edge_A:.0f} A")
+    print(f"      Est. volume: {volume_liters*1e24:.0f} A^3")
+    print(f"      Ion pairs to add: {num_ion_pairs}")
+    
+    return num_ion_pairs
 
 def build_system(protein_pdb, lig_mol2, lig_frcmod, kcx_frcmod, kcx_lib, output_dir):
     """Build solvated system with TLeap"""
@@ -186,12 +430,26 @@ system = combine {{mol LIG}}
     else:
         script += "system = mol\n"
     
+    # Calculate ion pairs for ionic strength
+    num_ion_pairs = calculate_ion_pairs(ionic_strength, box_size)
+    
     script += f"""
 # Solvate and add ions
 solvatebox system {water_box} {box_size}
+# First neutralize the system
 addions system Na+ 0
 addions system Cl- 0
-check system
+"""
+    
+    # Add additional ions for ionic strength (if requested)
+    if num_ion_pairs > 0:
+        script += f"""
+# Add ions for {ionic_strength*1000:.0f} mM ionic strength
+addions system Na+ {num_ion_pairs}
+addions system Cl- {num_ion_pairs}
+"""
+    
+    script += f"""check system
 saveamberparm system {prmtop} {inpcrd}
 savepdb system {os.path.join(output_dir, 'system_solvated.pdb')}
 quit
@@ -448,6 +706,14 @@ if __name__ == "__main__":
         
         print("\n--> Loading KCX parameters")
         kcx_frcmod, kcx_lib = get_kcx_parameters()
+        
+        # Validate KCX residues in input PDB
+        print("\n--> Checking for KCX residues")
+        kcx_validation = validate_kcx_residues(PDB_FILE_INPUT)
+        if kcx_validation['errors']:
+            print("\n    WARNING: KCX validation errors detected!")
+            print("    The simulation will continue, but results may be incorrect.")
+            print("    Consider fixing KCX atom names to match kcx.lib before proceeding.")
         
         lig_mol2, lig_frcmod = None, None
         if has_ligand: 

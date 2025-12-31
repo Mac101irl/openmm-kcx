@@ -1,5 +1,5 @@
 # --- Stage 1: Build Environment ---
-FROM mambaorg/micromamba:1.5-jammy AS builder
+FROM docker.io/mambaorg/micromamba:1.5-jammy AS builder
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,20 +9,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER $MAMBA_USER
 
+# Install in stages to reduce peak memory usage during dependency resolution
+# Stage 1: Core Python and basic scientific packages
 RUN micromamba install -y -n base -c conda-forge \
     python=3.10 \
     numpy \
     scipy \
     pandas \
     matplotlib \
+    && micromamba clean -afy
+
+# Stage 2: OpenMM and CUDA toolkit
+RUN micromamba install -y -n base -c conda-forge \
     openmm \
     cudatoolkit=11.8 \
+    && micromamba clean -afy
+
+# Stage 3: Analysis tools
+RUN micromamba install -y -n base -c conda-forge \
     parmed \
     mdtraj \
+    && micromamba clean -afy
+
+# Stage 4: AmberTools (heavy package)
+RUN micromamba install -y -n base -c conda-forge \
     ambertools \
+    && micromamba clean -afy
+
+# Stage 5: OpenMM force fields
+RUN micromamba install -y -n base -c conda-forge \
     openmmforcefields \
-    && micromamba clean -afy \
-    && find /opt/conda -type f -name '*.a' -delete \
+    && micromamba clean -afy
+
+# Final cleanup to reduce image size
+RUN find /opt/conda -type f -name '*.a' -delete \
     && find /opt/conda -type f -name '*.pyc' -delete \
     && find /opt/conda -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true \
     && find /opt/conda -type d -name 'tests' -exec rm -rf {} + 2>/dev/null || true \
@@ -35,7 +55,7 @@ RUN micromamba install -y -n base -c conda-forge \
 
 
 # --- Stage 2: Runtime Image ---
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+FROM docker.io/nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
