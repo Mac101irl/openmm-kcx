@@ -20,7 +20,7 @@ RUN wget -qO- https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj b
 
 # Install in stages to reduce peak memory usage during dependency resolution
 # Stage 1: Core Python and basic scientific packages
-RUN micromamba create -y -n base -c conda-forge \
+RUN micromamba install -y -p /opt/conda -c conda-forge \
     python=3.10 \
     numpy \
     scipy \
@@ -29,24 +29,24 @@ RUN micromamba create -y -n base -c conda-forge \
     && micromamba clean -afy
 
 # Stage 2: OpenMM and CUDA toolkit
-RUN micromamba install -y -n base -c conda-forge \
+RUN micromamba install -y -p /opt/conda -c conda-forge \
     openmm \
     cudatoolkit=11.8 \
     && micromamba clean -afy
 
 # Stage 3: Analysis tools
-RUN micromamba install -y -n base -c conda-forge \
+RUN micromamba install -y -p /opt/conda -c conda-forge \
     parmed \
     mdtraj \
     && micromamba clean -afy
 
 # Stage 4: AmberTools (heavy package)
-RUN micromamba install -y -n base -c conda-forge \
+RUN micromamba install -y -p /opt/conda -c conda-forge \
     ambertools \
     && micromamba clean -afy
 
 # Stage 5: OpenMM force fields
-RUN micromamba install -y -n base -c conda-forge \
+RUN micromamba install -y -p /opt/conda -c conda-forge \
     openmmforcefields \
     && micromamba clean -afy
 
