@@ -100,5 +100,3 @@ COPY kcx.lib kcx.frcmod /app/kcx_params/
 COPY run_openmm_kcx_v5.py /app/run_openmm_kcx_v5.py
 
 RUN chmod +x /app/run_openmm_kcx_v5.py
-
-ENTRYPOINT ["python", "/app/run_openmm_kcx_v5.py"]
