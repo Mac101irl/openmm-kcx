@@ -1,17 +1,26 @@
 # --- Stage 1: Build Environment ---
-FROM docker.io/mambaorg/micromamba:1.5-jammy AS builder
-USER root
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+ENV PATH=$MAMBA_ROOT_PREFIX/bin:$PATH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     wget \
+    ca-certificates \
+    bzip2 \
     && rm -rf /var/lib/apt/lists/*
 
-USER $MAMBA_USER
+# Install Micromamba
+RUN wget -qO- https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba \
+    && mv bin/micromamba /usr/local/bin/ \
+    && mkdir -p /opt/conda \
+    && chmod -R 777 /opt/conda
 
 # Install in stages to reduce peak memory usage during dependency resolution
 # Stage 1: Core Python and basic scientific packages
-RUN micromamba install -y -n base -c conda-forge \
+RUN micromamba create -y -n base -c conda-forge \
     python=3.10 \
     numpy \
     scipy \
